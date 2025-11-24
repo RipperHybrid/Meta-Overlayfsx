@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - '*'
+permissions:
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -35,3 +38,7 @@ jobs:
           files: meta-overlayfs-${{ steps.version.outputs.VERSION }}.zip
           body_path: meta-overlayfs-changelog.md
           generate_release_notes: true
+      
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: 'meta-overlayfs-${{ steps.version.outputs.VERSION }}.zip'
