@@ -229,6 +229,10 @@ fn collect_enabled_modules(metadata_dir: &str) -> Result<Vec<String>> {
             continue;
         }
 
+        if path == Path::new(SYSTEM_RW_DIR) {
+            continue;
+        }
+
         let module_id = match entry.file_name().to_str() {
             Some(id) => id.to_string(),
             None => continue,
