@@ -1,4 +1,5 @@
 {
+    "metamodule": true,
     "summary": "An implementation of a metamodule using OverlayFS for KernelSU",
     "sourceUrl": "https://github.com/KernelSU-Modules-Repo/meta-overlayfs",
     "additionalAuthors": [
