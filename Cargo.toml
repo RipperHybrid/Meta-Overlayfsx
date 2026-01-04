@@ -1,9 +1,9 @@
 [package]
-name = "meta-overlayfs"
-version = "1.3.1"
+name = "meta-overlayfsx"
+version = "1.3.2"
 edition = "2024"
-authors = ["KernelSU Developers"]
-description = "An implementation of a metamodule using OverlayFS for KernelSU"
+authors = ["KernelSU Developers", "AshBorn"]
+description = "Advanced OverlayFS metamodule with Live Patching. Based on the official KernelSU implementation."
 license = "GPL-3.0"
 
 [dependencies]

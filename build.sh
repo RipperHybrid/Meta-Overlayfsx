@@ -17,7 +17,7 @@ if [ -z "$MODULE_VERSION" ] || [ -z "$MODULE_VERSION_CODE" ]; then
 fi
 
 echo "=========================================="
-echo "Building meta-overlayfs v${VERSION}"
+echo "Building meta-overlayfsx v${VERSION}"
 echo "=========================================="
 
 # Detect build tool
@@ -61,41 +61,31 @@ fi
 # Copy binaries
 echo ""
 echo "Copying binaries..."
-cp target/aarch64-linux-android/release/meta-overlayfs \
-   "$MODULE_OUTPUT_DIR/meta-overlayfs-aarch64"
-cp target/x86_64-linux-android/release/meta-overlayfs \
-   "$MODULE_OUTPUT_DIR/meta-overlayfs-x86_64"
+cp target/aarch64-linux-android/release/meta-overlayfsx \
+   "$MODULE_OUTPUT_DIR/meta-overlayfsx-aarch64"
+cp target/x86_64-linux-android/release/meta-overlayfsx \
+   "$MODULE_OUTPUT_DIR/meta-overlayfsx-x86_64"
 
 # Copy metamodule files
 echo "Copying metamodule files..."
 cp "$METAMODULE_DIR"/module.prop "$MODULE_OUTPUT_DIR/"
 cp "$METAMODULE_DIR"/*.sh "$MODULE_OUTPUT_DIR/"
+cp -r "$METAMODULE_DIR"/webroot "$MODULE_OUTPUT_DIR/"
+
 
 # Set permissions
 echo "Setting permissions..."
 chmod 755 "$MODULE_OUTPUT_DIR"/*.sh
-chmod 755 "$MODULE_OUTPUT_DIR"/meta-overlayfs-*
+chmod 755 "$MODULE_OUTPUT_DIR"/meta-overlayfsx-*
 
 # Display binary sizes
 echo ""
 echo "Binary sizes:"
-echo "  aarch64: $(du -h "$MODULE_OUTPUT_DIR"/meta-overlayfs-aarch64 | awk '{print $1}')"
-echo "  x86_64:  $(du -h "$MODULE_OUTPUT_DIR"/meta-overlayfs-x86_64 | awk '{print $1}')"
-
-# Package
-echo ""
-echo "Packaging..."
-cd "$MODULE_OUTPUT_DIR"
-ZIP_NAME="meta-overlayfs-v${MODULE_VERSION}.zip"
-zip -r "../$ZIP_NAME" .
-cd ../..
+echo "  aarch64: $(du -h "$MODULE_OUTPUT_DIR"/meta-overlayfsx-aarch64 | awk '{print $1}')"
+echo "  x86_64:  $(du -h "$MODULE_OUTPUT_DIR"/meta-overlayfsx-x86_64 | awk '{print $1}')"
 
 echo ""
 echo "=========================================="
 echo "Build completed successfully!"
-echo "Output: $OUTPUT_DIR/$ZIP_NAME"
+echo "Files located in: $MODULE_OUTPUT_DIR"
 echo "=========================================="
-echo ""
-echo "To install:"
-echo "  adb push $OUTPUT_DIR/$ZIP_NAME /sdcard/"
-echo "  adb shell su -c 'ksud module install /sdcard/$ZIP_NAME'"

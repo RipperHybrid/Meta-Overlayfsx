@@ -1,0 +1,102 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'metamodule/**'
+      - 'src/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Setup Rust
+        run: |
+          rustup update stable
+          rustup target add aarch64-linux-android
+          rustup target add x86_64-linux-android
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          cache-targets: false
+
+      - name: Install cross
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build meta-overlayfsx metamodule
+        run: ./build.sh
+
+      - name: Prepare Release Data
+        id: prep
+        run: |
+          export TZ='Asia/Kolkata'
+          
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          
+          PROP_FILE=$(find . -type f -name "module.prop" ! -path "*/target/*" | head -n 1)
+          
+          if [ -z "$PROP_FILE" ]; then
+            echo "Error: module.prop not found!"
+            exit 1
+          fi
+
+          VERSION=$(grep -m1 '^version=' "$PROP_FILE" | cut -d'=' -f2- | tr -d '\r')
+          VER_CODE=$(grep -m1 '^versionCode=' "$PROP_FILE" | cut -d'=' -f2- | tr -d '\r')
+          
+          ZIP_NAME="${REPO_NAME}_v${VERSION}_${VER_CODE}.zip"
+          TAG_NAME="${VERSION}"
+          BUILD_TIME=$(date +"%d-%m-%Y %I:%M %p")
+          
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+          echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
+          
+          cd target/module
+          zip -r "../../$ZIP_NAME" .
+          cd ../..
+          
+          echo "### Update Info" > release_body.md
+          echo "**Released on:** $BUILD_TIME" >> release_body.md
+          echo "" >> release_body.md
+          
+          if [ -f "changelog.md" ]; then
+              echo "### Changelog" >> release_body.md
+              cat changelog.md >> release_body.md
+          else
+              echo "### Recent Changes" >> release_body.md
+              git log -1 --pretty=%B >> release_body.md
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.REPO_NAME }}-${{ env.TAG_NAME }}
+          path: ${{ env.ZIP_NAME }}
+          if-no-files-found: error
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: ${{ env.REPO_NAME }} Version ${{ env.TAG_NAME }} - Changelog
+          body_path: release_body.md
+          files: ${{ env.ZIP_NAME }}
+          draft: false
+          prerelease: false
