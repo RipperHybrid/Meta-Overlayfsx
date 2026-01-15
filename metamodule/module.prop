@@ -1,7 +1,9 @@
-id=meta-overlayfs
+id=meta-overlayfsx
 metamodule=1
-name=OverlayFS MetaModule
-version=1.3.1
-versionCode=13100
-author=KernelSU Developers
-description=An implementation of a metamodule using OverlayFS for KernelSU
+name=OverlayFS Enhanced
+version=1.3.2
+versionCode=13200
+author=AshBorn (orig. KernelSU Devs)
+description=Advanced OverlayFS metamodule with Live Patching. Based on the official KernelSU implementation.
+updateJson=https://overlayfsx.pages.dev/update.json
+updateJson=https://overlayfsx.pages.dev/changelog.md

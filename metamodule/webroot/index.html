@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Meta OverlayFS</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="toast-container"></div>
+    <div id="modal-container"></div>
+
+    <div id="app">
+        <header class="app-header">
+            <div class="header-content">
+                <h1 id="header-title">Meta OverlayFS</h1>
+                <div class="header-subtitle">Meta Module Manager</div>
+            </div>
+            <div class="header-status">
+                <span id="root-status" class="status-badge">
+                    <i class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></i>
+                    <span id="root-text">Checking</span>
+                </span>
+            </div>
+        </header>
+
+        <main class="app-content">
+            <div id="page-content" class="page-content"></div>
+        </main>
+
+        <nav class="bottom-nav" id="bottom-nav"></nav>
+    </div>
+
+    <script>
+        const CONFIG = {
+            IMG_FILE: "/data/adb/metamodule/modules.img",
+            MNT_DIR: "/data/adb/metamodule/mnt",
+            MODULES_DIR: "/data/adb/modules",
+            LOG_FILE: "/data/adb/metamodule/overlayfs.log",
+            LIVE_MODULES_FILE: "/data/adb/metamodule/live_modules.txt",
+            BINARY: "/data/adb/modules/meta-overlayfsx/meta-overlayfsx"
+        };
+    </script>
+    <script src="js/icons.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/dashboard.js"></script>
+    <script src="js/modules.js"></script>
+    <script src="js/settings.js"></script>
+    <script src="js/about.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>

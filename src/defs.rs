@@ -12,6 +12,9 @@ pub const DISABLE_FILE_NAME: &str = "disable";
 pub const _REMOVE_FILE_NAME: &str = "remove";
 pub const SKIP_MOUNT_FILE_NAME: &str = "skip_mount";
 
+// Live patching support
+pub const LIVE_MODULES_FILE: &str = "/data/adb/metamodule/live_modules.txt";
+
 // System directories
 pub const SYSTEM_RW_DIR: &str = "/data/adb/modules/.rw/";
 pub const KSU_OVERLAY_SOURCE: &str = "KSU";
