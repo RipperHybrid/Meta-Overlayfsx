@@ -1,0 +1,178 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'metamodule/**'
+      - 'src/**'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      zip_name: ${{ steps.prep.outputs.ZIP_NAME }}
+      tag_name: ${{ steps.prep.outputs.TAG_NAME }}
+      repo_name: ${{ steps.prep.outputs.REPO_NAME }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Rust
+        run: |
+          rustup update stable
+          rustup target add aarch64-linux-android
+          rustup target add x86_64-linux-android
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          cache-targets: false
+
+      - name: Install cross
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build overlayfsx metamodule
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Prepare Release Data
+        id: prep
+        run: |
+          export TZ='Asia/Kolkata'
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          PROP_FILE=$(find . -type f -name "module.prop" ! -path "*/target/*" | head -n 1)
+
+          if [ -z "$PROP_FILE" ]; then
+            echo "Error: module.prop not found!"
+            exit 1
+          fi
+
+          VERSION=$(grep -m1 '^version=' "$PROP_FILE" | cut -d'=' -f2- | tr -d '\r')
+          VER_CODE=$(grep -m1 '^versionCode=' "$PROP_FILE" | cut -d'=' -f2- | tr -d '\r')
+
+          TAG_NAME="v${VERSION}"
+          ZIP_NAME="${REPO_NAME}_${TAG_NAME}_${VER_CODE}.zip"
+          BUILD_TIME=$(date +"%d-%m-%Y %I:%M %p")
+
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          echo "TAG_NAME=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "REPO_NAME=$REPO_NAME" >> "$GITHUB_OUTPUT"
+
+          cd target/module
+          zip -r "../../$ZIP_NAME" .
+          cd ../..
+
+          echo "### Update Info" > release_body.md
+          echo "**Released on:** $BUILD_TIME" >> release_body.md
+          echo "" >> release_body.md
+
+          if [ -f "changelog.md" ]; then
+              echo "### Changelog" >> release_body.md
+              cat changelog.md >> release_body.md
+          else
+              echo "### Recent Changes" >> release_body.md
+              git log -1 --pretty=%B >> release_body.md
+          fi
+
+      - name: Upload Zip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-zip
+          path: ${{ steps.prep.outputs.ZIP_NAME }}
+
+      - name: Upload Body Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-body
+          path: release_body.md
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Zip Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: module-zip
+
+      - name: Download Body Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-body
+
+      - name: Send to Telegram
+        if: always()
+        env:
+          BOT_TOKEN: ${{ secrets.BOTAPI }}
+          CHAT_ID: ${{ secrets.CHANNEL }}
+          ZIP_NAME: ${{ needs.build.outputs.zip_name }}
+          REPO_SLUG: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          COMMIT_HASH: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
+            echo "Secrets missing. Skipping Telegram upload."
+            exit 0
+          fi
+
+          if [ ! -f "$ZIP_NAME" ]; then
+            echo "File $ZIP_NAME not found."
+            exit 1
+          fi
+
+          if [ "$EVENT_NAME" == "workflow_dispatch" ]; then
+            BTN_TEXT="Manual Run ⚡️"
+            BTN_URL="${SERVER_URL}/${REPO_SLUG}/actions/runs/${RUN_ID}"
+          else
+            BTN_TEXT="View Commit 📝"
+            BTN_URL="${SERVER_URL}/${REPO_SLUG}/commit/${COMMIT_HASH}"
+          fi
+
+          REPO_URL="${SERVER_URL}/${REPO_SLUG}"
+          KEYBOARD_JSON="{\"inline_keyboard\":[[{\"text\":\"$BTN_TEXT\",\"url\":\"$BTN_URL\"},{\"text\":\"Repo 🏠\",\"url\":\"$REPO_URL\"}]]}"
+
+          CAPTION=$(cat release_body.md)
+
+          if [ ${#CAPTION} -ge 1024 ]; then
+            CAPTION="${CAPTION:0:950}
+
+          ... (Changelog truncated due to Telegram limit)"
+          fi
+
+          curl -v -F "chat_id=$CHAT_ID" \
+               -F "document=@$ZIP_NAME" \
+               -F "caption=$CAPTION" \
+               -F "parse_mode=Markdown" \
+               -F "reply_markup=$KEYBOARD_JSON" \
+               "https://api.telegram.org/bot$BOT_TOKEN/sendDocument"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.build.outputs.tag_name }}
+          name: ${{ needs.build.outputs.repo_name }} Version ${{ needs.build.outputs.tag_name }}
+          body_path: release_body.md
+          files: ${{ needs.build.outputs.zip_name }}
+          draft: false
+          prerelease: false

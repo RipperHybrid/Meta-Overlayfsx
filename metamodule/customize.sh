@@ -9,35 +9,35 @@ ui_print "- Detected ABI: $ABI"
 # Select the correct binary based on architecture
 case "$ABI" in
     arm64-v8a)
-        ARCH_BINARY="meta-overlayfs-aarch64"
-        REMOVE_BINARY="meta-overlayfs-x86_64"
+        ARCH_BINARY="overlayfsx-aarch64"
+        REMOVE_BINARY="overlayfsx-x86_64"
         ui_print "- Selected architecture: ARM64"
         ;;
     x86_64)
-        ARCH_BINARY="meta-overlayfs-x86_64"
-        REMOVE_BINARY="meta-overlayfs-aarch64"
+        ARCH_BINARY="overlayfsx-x86_64"
+        REMOVE_BINARY="overlayfsx-aarch64"
         ui_print "- Selected architecture: x86_64"
         ;;
     *)
-        abort "! Unsupported architecture: $ABI"
+        abort "- Unsupported architecture: $ABI"
         ;;
 esac
 
 # Verify the selected binary exists
 if [ ! -f "$MODPATH/$ARCH_BINARY" ]; then
-    abort "! Binary not found: $ARCH_BINARY"
+    abort "- Binary not found: $ARCH_BINARY"
 fi
 
-ui_print "- Installing $ARCH_BINARY as meta-overlayfs"
+ui_print "- Installing $ARCH_BINARY as overlayfsx"
 
 # Rename the selected binary to the generic name
-mv "$MODPATH/$ARCH_BINARY" "$MODPATH/meta-overlayfs" || abort "! Failed to rename binary"
+mv "$MODPATH/$ARCH_BINARY" "$MODPATH/overlayfsx" || abort "- Failed to rename binary"
 
 # Remove the unused binary
 rm -f "$MODPATH/$REMOVE_BINARY"
 
 # Ensure the binary is executable
-chmod 755 "$MODPATH/meta-overlayfs" || abort "! Failed to set permissions"
+chmod 755 "$MODPATH/overlayfsx" || abort "- Failed to set permissions"
 
 ui_print "- Architecture-specific binary installed successfully"
 
@@ -48,20 +48,20 @@ EXISTING_IMG="/data/adb/modules/$MODID/modules.img"
 
 if [ -f "$EXISTING_IMG" ]; then
     ui_print "- Reusing modules image from previous install"
-    "$MODPATH/meta-overlayfs" xcp "$EXISTING_IMG" "$IMG_FILE" || \
-        abort "! Failed to copy existing modules image"
+    "$MODPATH/overlayfsx" xcp "$EXISTING_IMG" "$IMG_FILE" || \
+        abort "- Failed to copy existing modules image"
 else
     ui_print "- Creating 2GB ext4 image for module storage"
 
     # Create sparse file (2GB logical size, 0 bytes actual)
     truncate -s ${IMG_SIZE_MB}M "$IMG_FILE" || \
-        abort "! Failed to create image file"
+        abort "- Failed to create image file"
 
     # Remove journal to prevent creating jbd2 sysfs node
     /system/bin/mke2fs -t ext4 -O ^has_journal -F "$IMG_FILE" >/dev/null 2>&1 || \
-        abort "! Failed to format ext4 image"
+        abort "- Failed to format ext4 image"
 
     ui_print "- Image created successfully (sparse file)"
 fi
 
-ui_print "- Installation complete"
+ui_print "- Installation complete, Please reboot to apply changes."

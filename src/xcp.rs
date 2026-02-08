@@ -34,7 +34,7 @@ pub fn run(args: &[String]) -> Result<()> {
 }
 
 fn print_usage() {
-    eprintln!("Usage: meta-overlayfs xcp <src> <dst> [--punch-hole]");
+    eprintln!("Usage: overlayfsx xcp <src> <dst> [--punch-hole]");
 }
 
 // TODO: use libxcp to improve the speed if cross's MSRV is 1.70

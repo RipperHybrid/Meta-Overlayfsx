@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Meta OverlayFS</title>
+</head>
+<body>
+    <div id="toast-container"></div>
+    <div id="modal-container"></div>
+
+    <div id="app">
+        <header class="app-header">
+            <div class="header-content">
+                <h1 id="header-title">Meta OverlayFS</h1>
+                <div class="header-subtitle">Meta OverlayFsx Manager</div>
+            </div>
+            <div class="header-actions-global">
+                <button id="global-refresh-btn" class="btn-icon" aria-label="Refresh">
+                    <i class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></i>
+                </button>
+            </div>
+        </header>
+
+        <main class="app-content">
+            <div id="page-content" class="page-content"></div>
+        </main>
+
+        <nav class="bottom-nav" id="bottom-nav"></nav>
+    </div>
+
+    <script>
+        window.CONFIG = {
+            IMG_FILE: "/data/adb/metamodule/modules.img",
+            MNT_DIR: "/data/adb/metamodule/mnt",
+            MODULES_DIR: "/data/adb/modules",
+            LOG_FILE: "/data/adb/metamodule/overlayfs.log",
+            BINARY: "/data/adb/modules/overlayfsx/overlayfsx"
+        };
+    </script>
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
