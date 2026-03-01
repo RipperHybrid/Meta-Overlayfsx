@@ -133,12 +133,10 @@ jobs:
           SERVER_URL: ${{ github.server_url }}
         run: |
           if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
-            echo "Secrets missing. Skipping Telegram upload."
             exit 0
           fi
 
           if [ ! -f "$ZIP_NAME" ]; then
-            echo "File $ZIP_NAME not found."
             exit 1
           fi
 
@@ -156,9 +154,11 @@ jobs:
           CAPTION=$(cat release_body.md)
 
           if [ ${#CAPTION} -ge 1024 ]; then
-            CAPTION="${CAPTION:0:950}
+            CAPTION="${CAPTION:0:900}"
+            CAPTION=$(echo "$CAPTION" | tr -d '*_`')
+            CAPTION="${CAPTION}
 
-          ... (Changelog truncated due to Telegram limit)"
+          ... (Changelog truncated. Click Repo to see full changes)"
           fi
 
           curl -v -F "chat_id=$CHAT_ID" \
