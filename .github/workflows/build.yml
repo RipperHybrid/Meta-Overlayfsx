@@ -3,9 +3,6 @@ name: Build and Release
 on:
   workflow_dispatch:
   push:
-    paths:
-      - 'metamodule/**'
-      - 'src/**'
 
 permissions:
   contents: write
@@ -62,7 +59,6 @@ jobs:
           PROP_FILE=$(find . -type f -name "module.prop" ! -path "*/target/*" | head -n 1)
 
           if [ -z "$PROP_FILE" ]; then
-            echo "Error: module.prop not found!"
             exit 1
           fi
 
@@ -81,15 +77,15 @@ jobs:
           zip -r "../../$ZIP_NAME" .
           cd ../..
 
-          echo "### Update Info" > release_body.md
-          echo "**Released on:** $BUILD_TIME" >> release_body.md
+          echo "Update Info" > release_body.md
+          echo "Released on: $BUILD_TIME" >> release_body.md
           echo "" >> release_body.md
 
           if [ -f "changelog.md" ]; then
-              echo "### Changelog" >> release_body.md
+              echo "Changelog" >> release_body.md
               cat changelog.md >> release_body.md
           else
-              echo "### Recent Changes" >> release_body.md
+              echo "Recent Changes" >> release_body.md
               git log -1 --pretty=%B >> release_body.md
           fi
 
@@ -151,20 +147,17 @@ jobs:
           REPO_URL="${SERVER_URL}/${REPO_SLUG}"
           KEYBOARD_JSON="{\"inline_keyboard\":[[{\"text\":\"$BTN_TEXT\",\"url\":\"$BTN_URL\"},{\"text\":\"Repo 🏠\",\"url\":\"$REPO_URL\"}]]}"
 
-          CAPTION=$(cat release_body.md)
+          CAPTION=$(cat release_body.md | sed -e 's/^[ \t]*\* /• /g' -e 's/[*_`#]//g')
 
           if [ ${#CAPTION} -ge 1024 ]; then
-            CAPTION="${CAPTION:0:900}"
-            CAPTION=$(echo "$CAPTION" | tr -d '*_`')
-            CAPTION="${CAPTION}
+            CAPTION="${CAPTION:0:900}
 
-          ... (Changelog truncated. Click Repo to see full changes)"
+          (Changelog truncated. Click to see full changes)"
           fi
 
           curl -v -F "chat_id=$CHAT_ID" \
                -F "document=@$ZIP_NAME" \
                -F "caption=$CAPTION" \
-               -F "parse_mode=Markdown" \
                -F "reply_markup=$KEYBOARD_JSON" \
                "https://api.telegram.org/bot$BOT_TOKEN/sendDocument"
 
