@@ -121,6 +121,7 @@ jobs:
 
       - name: Send to Telegram
         if: always()
+        continue-on-error: true
         env:
           BOT_TOKEN: ${{ secrets.BOTAPI }}
           CHAT_ID: ${{ secrets.CHANNEL }}

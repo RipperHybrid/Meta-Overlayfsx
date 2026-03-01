@@ -1,8 +1,8 @@
 id=meta-overlayfsx
 metamodule=1
 name=OverlayFS Enhanced
-version=1.3.2
-versionCode=13200
+version=1.3.3
+versionCode=13300
 author=AshBorn (orig. KernelSU Devs)
 description=Overlayfs fork featuring WebUI. Based on the official KernelSU implementation.
 updateJson=https://overlayfsx.pages.dev/update.json

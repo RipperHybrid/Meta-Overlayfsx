@@ -91,6 +91,69 @@ copy_selinux_contexts() {
     done
 }
 
+# Check for file conflicts with other installed modules
+check_conflicts() {
+    log "- Scanning for potential file conflicts..."
+    local temp_conflicts="/data/local/tmp/overlayfsx_conflicts_$$.tmp"
+    rm -f "$temp_conflicts"
+
+    find "$MODPATH" -type f 2>/dev/null | while IFS= read -r FILE; do
+        REL_PATH="${FILE#"$MODPATH/"}"
+
+        case "$REL_PATH" in
+            system/*|vendor/*|product/*|system_ext/*|odm/*|oem/*)
+                for OTHER_MOD_DIR in "$MNT_DIR"/*/; do
+                    [ ! -d "$OTHER_MOD_DIR" ] && continue
+
+                    OTHER_MOD="$(basename "$OTHER_MOD_DIR")"
+
+                    [ "$OTHER_MOD" = "$MODID" ] && continue
+                    [ "$OTHER_MOD" = "lost+found" ] && continue
+
+                    if [ -f "$OTHER_MOD_DIR/$REL_PATH" ]; then
+                        FILENAME="$(basename "$REL_PATH")"
+                        echo "$OTHER_MOD|$FILENAME" >> "$temp_conflicts"
+                    fi
+                done
+                ;;
+        esac
+    done
+
+    if [ -f "$temp_conflicts" ]; then
+        log "- Warning: File conflicts detected at the exact same mount path!"
+
+        awk -F'|' '{
+            mod=$1
+            file=$2
+            if (!seen[mod, file]) {
+                seen[mod, file] = 1
+                count[mod]++
+                if (count[mod] <= 5) {
+                    if (count[mod] == 1) {
+                        mods[mod] = file
+                    } else {
+                        mods[mod] = mods[mod] ", " file
+                    }
+                }
+            }
+        } END {
+            for (m in mods) {
+                if (count[m] > 5) {
+                    mods[m] = mods[m] " and " (count[m] - 5) " more"
+                }
+                print m "|" count[m] "|" mods[m]
+            }
+        }' "$temp_conflicts" | while IFS='|' read -r mod_name file_count files; do
+            log "  -> [$mod_name] matches $file_count file(s): $files"
+        done
+
+        log "- Note: Both exist in their module folders, but the last one mounted will shadow (overwrite) the other."
+        rm -f "$temp_conflicts"
+    else
+        log "- No file conflicts found."
+    fi
+}
+
 # Post-installation: move partition directories to ext4 image
 post_install_to_image() {
     log "- Moving module content to image"

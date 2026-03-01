@@ -23,6 +23,9 @@ install_module
 if module_requires_overlay_move; then
     ensure_image_mounted
 
+    # Run the conflict scan before moving files
+    check_conflicts
+
     # Move files to image
     post_install_to_image
     log "- Reboot required for changes to take effect"

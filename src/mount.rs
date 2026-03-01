@@ -255,6 +255,8 @@ fn collect_enabled_modules(metadata_dir: &str) -> Result<Vec<String>> {
         enabled.push(module_id);
     }
 
+    enabled.sort();
+
     Ok(enabled)
 }
 

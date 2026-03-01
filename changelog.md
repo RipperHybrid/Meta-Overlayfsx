@@ -1,19 +1,13 @@
-## v1.3.2 - Major Overhaul & WebUI Integration
-
-### 🚨 Core Rebranding
-- **Project Renamed:** transitioned from `meta-overlayfs` to **`overlayfsx`**.
+## v1.3.3 - Conflict Detection & Mount Priority
 
 ### ✨ New Features
-- **WebUI Dashboard:**
-  - Added a comprehensive **KernelSU Manager WebUI** built with Vite & Vanilla JS.
-  - **Dashboard:** View real-time storage usage (ext4 image), mount status, and device info.
-  - **Module Manager:** Search, filter, enable/disable modules, and uninstall modules directly from the UI.
-  - **Log Viewer:** View and clear system logs (`overlayfs.log`) directly within the app.
 
-### 🛠️ Technical Improvements
-- **Shell Script Refactoring:**
-  - **`utils.sh`:** Introduced a shared utility library to centralize logging, prop extraction, and mounting logic, reducing code duplication across scripts.
-  - **`metamount.sh`:**
-    - Added **Orphaned Module Cleanup**: Automatically detects and removes modules from the mounted image if they were deleted from `/data/adb/modules`.
-    - Improved **SELinux Context** handling for `.rw` partition structures.
-  - **`metainstall.sh`:** Updated to utilize `utils.sh` for cleaner installation logic.
+* **Smart File Conflict Detection:**
+* Added a pre-mount scanner during module installation that detects if multiple modules are attempting to modify the exact same system files.
+
+* **Deterministic Mount Ordering (Rust):**
+* Updated the core mounting binary (`src/mount.rs`) to explicitly sort enabled modules alphabetically before building the OverlayFS layers.
+* This guarantees a **predictable mount priority** hierarchy (e.g., `Module_A` will always reliably overwrite `Module_B`) rather than relying on the random read order of the filesystem.
+
+* **Shell Script Refactoring:**
+* **`metainstall.sh` & `utils.sh`:** Integrated the new conflict checking logic seamlessly into the install hook before files are pushed to the ext4 image.
