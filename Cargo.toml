@@ -1,9 +1,9 @@
 [package]
 name = "overlayfsx"
-version = "1.3.2"
+version = "1.3.4"
 edition = "2024"
 authors = ["KernelSU Developers", "AshBorn"]
-description = "Overlayfs fork featuring WebUI. Based on the official KernelSU implementation."
+description = "Next-Gen OverlayFS engine with real-time kernel inspection & native WebUI."
 license = "GPL-3.0"
 
 [dependencies]

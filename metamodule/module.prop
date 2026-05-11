@@ -1,8 +1,9 @@
 id=meta-overlayfsx
 metamodule=1
 name=OverlayFS Enhanced
-version=1.3.3
-versionCode=13300
-author=AshBorn (orig. KernelSU Devs)
-description=Overlayfs fork featuring WebUI. Based on the official KernelSU implementation.
+version=1.3.4
+versionCode=13400
+author=AshBorn (@Ripper_Hybrid) & KernelSU Devs
+description=Next-Gen OverlayFS engine with real-time kernel inspection & native WebUI.
 updateJson=https://overlayfsx.pages.dev/update.json
+banner=banner

@@ -86,6 +86,7 @@ cp target/x86_64-linux-android/release/overlayfsx \
 
 echo "Copying metamodule files..."
 cp "$METAMODULE_DIR"/module.prop "$MODULE_OUTPUT_DIR/"
+cp "$METAMODULE_DIR"/banner* "$MODULE_OUTPUT_DIR/" 2>/dev/null || true
 cp "$METAMODULE_DIR"/*.sh "$MODULE_OUTPUT_DIR/"
 
 echo "Copying bundled webroot..."

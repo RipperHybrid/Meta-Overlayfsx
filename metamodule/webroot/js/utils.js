@@ -4,16 +4,13 @@ export default class Utils {
     static async execCommand(command) {
         return new Promise((resolve, reject) => {
             if (typeof ksu !== 'undefined' && typeof ksu.exec === 'function') {
-                const callbackName = `exec_callback_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+                const callbackName = `exec_cb_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
                 window[callbackName] = function(errno, stdout, stderr) {
                     delete window[callbackName];
-                    if (errno !== 0) {
-                        reject(new Error(stderr || `Error ${errno}`));
-                    } else {
-                        resolve(stdout);
-                    }
+                    if (errno !== 0) reject(new Error(stderr || `Error ${errno}`));
+                    else resolve(stdout);
                 };
-                ksu.exec(command, "{}", callbackName);
+                ksu.exec(command, '{}', callbackName);
             } else {
                 setTimeout(() => resolve(''), 100);
             }
@@ -22,158 +19,121 @@ export default class Utils {
 
     static async getModuleProp(moduleId, prop) {
         try {
-            const propFile = `/data/adb/modules/${moduleId}/module.prop`;
-            const result = await this.execCommand(`grep "^${prop}=" "${propFile}" 2>/dev/null | cut -d'=' -f2-`);
+            const result = await this.execCommand(
+                `grep "^${prop}=" "/data/adb/modules/${moduleId}/module.prop" 2>/dev/null | cut -d'=' -f2-`
+            );
             return result.trim() || null;
-        } catch {
-            return null;
-        }
+        } catch { return null; }
     }
 
-    static async updateRootStatus() {
-        const hasRoot = await Utils.checkRoot();
-        const ksuInstalled = await Utils.checkKernelSU();
-
-        const statusEl = document.getElementById('root-status');
-        const textEl = document.getElementById('root-text');
-
-        if (!statusEl || !textEl) return;
-
-        if (ksuInstalled) {
-            statusEl.className = 'status-badge status-success';
-            textEl.textContent = 'KernelSU';
-        } else if (hasRoot) {
-            statusEl.className = 'status-badge status-warning';
-            textEl.textContent = 'Root';
-        } else {
-            statusEl.className = 'status-badge status-error';
-            textEl.textContent = 'No Root';
-        }
-    }
+    static async updateRootStatus() {}
 
     static async getStorageUsage(imgFile, mntDir) {
         try {
-            const mounted = await Utils.execCommand(`mountpoint -q "${mntDir}" && echo "1"`).then(() => true).catch(() => false);
-            const exists = await Utils.execCommand(`[ -f "${imgFile}" ] && echo "1"`).then(() => true).catch(() => false);
+            const [mounted, exists] = await Promise.all([
+                this.execCommand(`mountpoint -q "${mntDir}" && echo "1"`).then(() => true).catch(() => false),
+                this.execCommand(`[ -f "${imgFile}" ] && echo "1"`).then(() => true).catch(() => false),
+            ]);
 
-            let result = {
-                used: 0,
-                total: 0,
-                free: 0,
-                percent: 0,
-                usedFormatted: '0B',
-                totalFormatted: '0B',
-                freeFormatted: '0B',
-                mounted: mounted,
-                exists: exists
-            };
+            const base = { used: 0, total: 0, free: 0, percent: 0,
+                usedFormatted: '0 B', totalFormatted: '0 B', freeFormatted: '0 B', mounted, exists };
 
-            if (exists) {
-                const imgSize = await Utils.execCommand(`stat -c%s "${imgFile}" 2>/dev/null`).catch(() => '0');
-                const total = parseInt(imgSize) || 0;
-                let used = 0;
+            if (!exists) return base;
 
-                if (mounted) {
-                    const dfOutput = await Utils.execCommand(`df -k "${mntDir}" 2>/dev/null | tail -1`).catch(() => '');
-                    if (dfOutput && dfOutput.trim()) {
-                        const parts = dfOutput.trim().split(/\s+/);
-                        if (parts.length >= 4) {
-                            used = (parseInt(parts[2]) || 0) * 1024;
-                        }
-                    }
-                } else {
-                    used = Math.round(total * 0.11);
-                }
+            const imgSize = await this.execCommand(`stat -c%s "${imgFile}" 2>/dev/null`).catch(() => '0');
+            const total = parseInt(imgSize) || 0;
+            let used = 0;
 
-                const free = total - used;
-                const percent = total > 0 ? Math.round((used / total) * 100) : 0;
-
-                result = {
-                    used,
-                    total,
-                    free,
-                    percent,
-                    usedFormatted: Utils.formatBytes(used),
-                    totalFormatted: Utils.formatBytes(total),
-                    freeFormatted: Utils.formatBytes(free),
-                    mounted,
-                    exists
-                };
+            if (mounted) {
+                const df = await this.execCommand(`df -k "${mntDir}" 2>/dev/null | tail -1`).catch(() => '');
+                const parts = df.trim().split(/\s+/);
+                if (parts.length >= 3) used = (parseInt(parts[2]) || 0) * 1024;
+            } else {
+                used = Math.round(total * 0.11);
             }
-            return result;
-        } catch (e) {
-            console.error("Storage check failed", e);
+
+            const free    = total - used;
+            const percent = total > 0 ? Math.round((used / total) * 100) : 0;
+
             return {
-                used: 0, total: 0, free: 0, percent: 0,
-                usedFormatted: 'Error', totalFormatted: 'Error', freeFormatted: 'Error',
-                mounted: false, exists: false
+                used, total, free, percent,
+                usedFormatted:  this.formatBytes(used),
+                totalFormatted: this.formatBytes(total),
+                freeFormatted:  this.formatBytes(free),
+                mounted, exists
             };
+        } catch {
+            return { used: 0, total: 0, free: 0, percent: 0,
+                usedFormatted: 'Error', totalFormatted: 'Error', freeFormatted: 'Error',
+                mounted: false, exists: false };
         }
     }
 
-    static logToFile(message) {
-        const date = new Date();
-        const timestamp = `${date.getDate().toString().padStart(2, '0')}.${(date.getMonth()+1).toString().padStart(2, '0')}.${date.getFullYear().toString().slice(-2)} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}`;
-        const logEntry = `${timestamp}: [overlayfsx-webui] - ${message}`;
-
-        if (typeof ksu !== 'undefined') {
-            const escapedLog = logEntry.replace(/'/g, "'\\''").replace(/\n/g, ' ');
-            const logCmd = `echo '${escapedLog}' >> "${CONFIG.LOG_FILE}"`;
-            ksu.exec(logCmd, "{}", () => {});
-        }
+    static logToFile(message, level = 'INFO') {
+        if (typeof ksu === 'undefined') return;
+        const lvl = level.padEnd(5, ' ');
+        const entry = `[${lvl} overlayfsx::webui] ${message}`.replace(/'/g, "'\\''").replace(/\n/g, ' ');
+        ksu.exec(`echo '${entry}' >> "${CONFIG.LOG_FILE}"`, '{}', () => {});
     }
 
-    static formatBytes(bytes, decimals = 2) {
-        if (bytes === 0) return '0 Bytes';
+    static formatBytes(bytes, decimals = 1) {
+        if (!bytes || bytes === 0) return '0 B';
         const k = 1024;
-        const dm = decimals < 0 ? 0 : decimals;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(k));
+        return `${parseFloat((bytes / Math.pow(k, i)).toFixed(decimals < 0 ? 0 : decimals))} ${sizes[i]}`;
     }
 
     static showToast(message, type = 'info', duration = 3000) {
+        const logLevel = type === 'warning' ? 'WARN' : 'INFO';
+
+        const cleanMessage = message.replace(/<[^>]+>/g, '');
+        this.logToFile(cleanMessage, logLevel);
+
         const container = document.getElementById('toast-container');
+        if (!container) return;
+
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;
 
-        const iconName = type === 'success' ? 'check-circle' :
-                        type === 'error' ? 'exclamation-circle' :
-                        type === 'warning' ? 'exclamation-triangle' : 'info-circle';
+        const iconName = {
+            success: 'check-circle',
+            error:   'exclamation-circle',
+            warning: 'exclamation-triangle',
+            info:    'info-circle'
+        }[type] || 'info-circle';
 
         toast.innerHTML = `${icon(iconName)}<span>${message}</span>`;
         container.appendChild(toast);
 
         setTimeout(() => {
-            toast.style.animation = 'slideOut 0.3s ease forwards';
-            setTimeout(() => toast.remove(), 300);
+            toast.style.animation = 'toastOut 0.25s cubic-bezier(0.4,0,0.2,1) forwards';
+            setTimeout(() => toast.remove(), 250);
         }, duration);
     }
 
     static showModal(title, content, buttons = []) {
-        return new Promise((resolve) => {
+        return new Promise(resolve => {
             document.body.classList.add('modal-open');
-
             const container = document.getElementById('modal-container');
+
             const modal = document.createElement('div');
             modal.className = 'modal';
 
-            const safeButtons = buttons.map(btn => ({
-                ...btn,
-                resultString: String(btn.result)
-            }));
+            const safeButtons = buttons.map(btn => ({ ...btn, resultString: String(btn.result) }));
 
             modal.innerHTML = `
                 <div class="modal-content">
                     <div class="modal-header">
                         <h3 class="modal-title">${title}</h3>
-                        <button class="modal-close">&times;</button>
+                        <button class="modal-close">✕</button>
                     </div>
                     <div class="modal-body">${content}</div>
-                    ${safeButtons.length > 0 ? `
+                    ${safeButtons.length ? `
                     <div class="modal-footer">
                         ${safeButtons.map(btn => `
-                            <button class="btn btn-${btn.type || 'secondary'}" data-result="${btn.resultString}">
+                            <button class="s-btn ${btn.type === 'danger' ? 'danger' : btn.type === 'primary' ? 'primary' : ''}"
+                                    data-result="${btn.resultString}">
                                 ${btn.text}
                             </button>
                         `).join('')}
@@ -181,102 +141,80 @@ export default class Utils {
                     ` : ''}
                 </div>
             `;
+
             container.appendChild(modal);
+            let resolved = false;
 
-            let isResolved = false;
-
-            const closeModal = (result) => {
-                if (isResolved) return;
-                isResolved = true;
-
-                modal.style.animation = 'fadeOut 0.3s ease forwards';
+            const close = result => {
+                if (resolved) return;
+                resolved = true;
+                modal.style.animation = 'fadeIn 0.2s reverse forwards';
                 setTimeout(() => {
                     modal.remove();
                     document.body.classList.remove('modal-open');
                     resolve(result);
-                }, 300);
+                }, 200);
             };
 
-            modal.querySelector('.modal-close').addEventListener('click', () => closeModal(null));
+            modal.querySelector('.modal-close').addEventListener('click', () => close(null));
+            modal.addEventListener('click', e => { if (e.target === modal) close(null); });
 
-            modal.addEventListener('click', (e) => {
-                if (e.target === modal) closeModal(null);
-            });
-
-            const actionButtons = modal.querySelectorAll('.modal-footer button');
-            actionButtons.forEach(btn => {
-                btn.addEventListener('click', (e) => {
+            modal.querySelectorAll('.modal-footer button').forEach(btn => {
+                btn.addEventListener('click', e => {
                     e.stopPropagation();
-                    const rawResult = btn.dataset.result;
-                    let result = rawResult;
-
-                    if (rawResult === 'true') result = true;
-                    else if (rawResult === 'false') result = false;
-                    else if (rawResult === 'null') result = null;
-
-                    closeModal(result);
+                    const raw = btn.dataset.result;
+                    close(raw === 'true' ? true : raw === 'false' ? false : raw === 'null' ? null : raw);
                 });
             });
         });
     }
 
     static async confirmAction(title, message, confirmText = 'Confirm', cancelText = 'Cancel') {
-        return Utils.showModal(
+        return this.showModal(
             title,
             `<div class="confirm-message">${message}</div>`,
             [
-                { text: cancelText, type: 'secondary', result: false },
-                { text: confirmText, type: 'danger', result: true }
+                { text: cancelText,  type: 'secondary', result: false },
+                { text: confirmText, type: 'danger',    result: true  },
             ]
         );
     }
 
     static async checkRoot() {
         try {
-            const result = await this.execCommand('id');
-            return result.includes('uid=0');
-        } catch {
-            return false;
-        }
+            const r = await this.execCommand('id');
+            return r.includes('uid=0');
+        } catch { return false; }
     }
 
     static async checkKernelSU() {
         try {
-            const result = await this.execCommand('ksud -V 2>/dev/null || echo "N/A"');
-            const version = result.trim();
-            return version !== 'N/A';
-        } catch {
-            return false;
-        }
+            const r = await this.execCommand('ksud -V 2>/dev/null || echo "N/A"');
+            return r.trim() !== 'N/A' && r.trim() !== '';
+        } catch { return false; }
     }
 
     static async copyToClipboard(text) {
         try {
             await navigator.clipboard.writeText(text);
-            Utils.showToast('Copied to clipboard', 'success');
+            this.showToast('Copied to clipboard', 'success');
             return true;
-        } catch (error) {
-            const textarea = document.createElement("textarea");
-            textarea.value = text;
-            textarea.style.position = 'fixed';
-            textarea.style.left = '-9999px';
-            document.body.appendChild(textarea);
-            textarea.select();
-            textarea.setSelectionRange(0, 99999);
-
+        } catch {
+            const ta = Object.assign(document.createElement('textarea'), {
+                value: text,
+                className: 'hidden-textarea'
+            });
+            document.body.appendChild(ta);
+            ta.select();
+            ta.setSelectionRange(0, 99999);
             try {
-                const success = document.execCommand('copy');
-                document.body.removeChild(textarea);
-                if (success) {
-                    Utils.showToast('Copied to clipboard', 'success');
-                    return true;
-                } else {
-                    Utils.showToast('Failed to copy', 'error');
-                    return false;
-                }
-            } catch (err) {
-                document.body.removeChild(textarea);
-                Utils.showToast('Failed to copy', 'error');
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                this.showToast(ok ? 'Copied' : 'Copy failed', ok ? 'success' : 'error');
+                return ok;
+            } catch {
+                document.body.removeChild(ta);
+                this.showToast('Copy failed', 'error');
                 return false;
             }
         }

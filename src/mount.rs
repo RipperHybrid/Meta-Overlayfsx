@@ -1,8 +1,8 @@
-// Overlayfs mounting implementation
-// Migrated from ksud/src/mount.rs and ksud/src/init_event.rs
+// Overlayfsx mounting implementation
+// Migrated and adapted for dual-directory architecture
 
 use anyhow::{Context, Result, bail};
-use log::{info, warn};
+use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -24,12 +24,15 @@ pub fn mount_overlayfs(
         .chain(std::iter::once(lowest))
         .collect::<Vec<_>>()
         .join(":");
+
     info!(
-        "mount overlayfs on {:?}, lowerdir={}, upperdir={:?}, workdir={:?}",
-        dest.as_ref(),
-        lowerdir_config,
-        upperdir,
-        workdir
+        "Overlaying {} ({} lowerdirs)",
+        dest.as_ref().display(),
+        lower_dirs.len()
+    );
+    debug!(
+        "Overlay details - lowerdir={}, upperdir={:?}, workdir={:?}",
+        lowerdir_config, upperdir, workdir
     );
 
     let upperdir = upperdir
@@ -60,7 +63,7 @@ pub fn mount_overlayfs(
     })();
 
     if let Err(e) = result {
-        warn!("fsopen mount failed: {e:#}, fallback to mount");
+        warn!("fsopen overlay rejected ({e:#}), falling back to legacy mount");
         let mut data = format!("lowerdir={lowerdir_config}");
         if let (Some(upperdir), Some(workdir)) = (upperdir, workdir) {
             data = format!("{data},upperdir={upperdir},workdir={workdir}");
@@ -78,7 +81,7 @@ pub fn mount_overlayfs(
 
 pub fn bind_mount(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<()> {
     info!(
-        "bind mount {} -> {}",
+        "Bind mounting {} -> {}",
         from.as_ref().display(),
         to.as_ref().display()
     );
@@ -121,16 +124,16 @@ fn mount_overlay_child(
         if path.is_dir() {
             lower_dirs.push(lower_dir);
         } else if path.exists() {
-            // stock root has been blocked by this file
+            // The stock root has been explicitly blocked/shadowed by this file
             return Ok(());
         }
     }
     if lower_dirs.is_empty() {
         return Ok(());
     }
-    // merge modules and stock
+
     if let Err(e) = mount_overlayfs(&lower_dirs, stock_root, None, None, mount_point) {
-        warn!("failed: {e:#}, fallback to bind mount");
+        warn!("Overlay rejected for child {} ({e:#}), falling back to bind mount", mount_point);
         bind_mount(stock_root, mount_point)?;
     }
     Ok(())
@@ -142,11 +145,11 @@ pub fn mount_overlay(
     workdir: Option<PathBuf>,
     upperdir: Option<PathBuf>,
 ) -> Result<()> {
-    info!("mount overlay for {root}");
+    debug!("Mount overlay requested for {root}");
     std::env::set_current_dir(root).with_context(|| format!("failed to chdir to {root}"))?;
     let stock_root = ".";
 
-    // collect child mounts before mounting the root
+    // Map existing child mounts before throwing the master overlay to prevent shadowing OS mounts
     let mounts = Process::myself()?
         .mountinfo()
         .with_context(|| "get mountinfo")?;
@@ -162,7 +165,8 @@ pub fn mount_overlay(
     mount_seq.dedup();
 
     mount_overlayfs(module_roots, root, upperdir, workdir, root)
-        .with_context(|| "mount overlayfs for root failed")?;
+        .with_context(|| "mount overlayfsx for root failed")?;
+
     for mount_point in mount_seq.iter() {
         let Some(mount_point) = mount_point else {
             continue;
@@ -173,7 +177,7 @@ pub fn mount_overlay(
             continue;
         }
         if let Err(e) = mount_overlay_child(mount_point, &relative, module_roots, &stock_root) {
-            warn!("failed to mount overlay for child {mount_point}: {e:#}, revert");
+            warn!("Failed to mount overlay for child {mount_point}: {e:#}, reverting");
             umount_dir(root).with_context(|| format!("failed to revert {root}"))?;
             bail!(e);
         }
@@ -187,19 +191,17 @@ pub fn umount_dir(src: impl AsRef<Path>) -> Result<()> {
     Ok(())
 }
 
-// ========== Mount coordination logic (from init_event.rs) ==========
-
 fn mount_partition(partition_name: &str, lowerdir: &Vec<String>) -> Result<()> {
     if lowerdir.is_empty() {
-        warn!("partition: {partition_name} lowerdir is empty");
+        debug!("Partition: {} has no module overlays, skipping", partition_name);
         return Ok(());
     }
 
     let partition = format!("/{partition_name}");
 
-    // if /partition is a symlink and linked to /system/partition, then we don't need to overlay it separately
+    // Bypass partitions that are just symlinks to avoid duplicate overlays
     if Path::new(&partition).read_link().is_ok() {
-        warn!("partition: {partition} is a symlink");
+        debug!("Partition: {} is a symlink, skipping", partition);
         return Ok(());
     }
 
@@ -214,10 +216,8 @@ fn mount_partition(partition_name: &str, lowerdir: &Vec<String>) -> Result<()> {
     mount_overlay(&partition, lowerdir, workdir, upperdir)
 }
 
-/// Collect enabled module IDs from metadata directory
-///
-/// Reads module list and status from metadata directory, returns enabled module IDs
-fn collect_enabled_modules(metadata_dir: &str) -> Result<Vec<String>> {
+// Exposed so inspect.rs can run the exact same active status checks as the mounting system
+pub fn collect_enabled_modules(metadata_dir: &str) -> Result<Vec<String>> {
     let dir = std::fs::read_dir(metadata_dir)
         .with_context(|| format!("Failed to read metadata directory: {}", metadata_dir))?;
 
@@ -234,43 +234,36 @@ fn collect_enabled_modules(metadata_dir: &str) -> Result<Vec<String>> {
             None => continue,
         };
 
-        // Check status markers
         if path.join(DISABLE_FILE_NAME).exists() {
-            info!("Module {} is disabled, skipping", module_id);
+            debug!("Module {} is disabled, skipping", module_id);
             continue;
         }
 
         if path.join(SKIP_MOUNT_FILE_NAME).exists() {
-            info!("Module {} has skip_mount, skipping", module_id);
+            debug!("Module {} has skip_mount, skipping", module_id);
             continue;
         }
 
-        // Optional: verify module.prop exists
         if !path.join("module.prop").exists() && !path.eq(Path::new(SYSTEM_RW_DIR)) {
-            warn!("Module {} has no module.prop, skipping", module_id);
+            debug!("Module {} has no module.prop, skipping", module_id);
             continue;
         }
 
-        info!("Module {} enabled", module_id);
         enabled.push(module_id);
     }
 
     enabled.sort();
-
     Ok(enabled)
 }
 
-/// Dual-directory version of mount_modules_systemlessly
-///
-/// Parameters:
-/// - metadata_dir: Metadata directory, stores module.prop, disable, skip_mount, etc.
-/// - content_dir: Content directory, stores system/, vendor/ and other partition content (ext4 image mount point)
+/// Architecture:
+/// - metadata_dir: Stores module.prop, disable, skip_mount flags (Stock Magisk/KSU dir)
+/// - content_dir: Stores the actual modified partition files injected via ext4 image
 pub fn mount_modules_systemlessly(metadata_dir: &str, content_dir: &str) -> Result<()> {
     info!("Scanning modules (dual-directory mode)");
-    info!("  Metadata: {}", metadata_dir);
-    info!("  Content: {}", content_dir);
+    debug!("  Metadata: {}", metadata_dir);
+    debug!("  Content: {}", content_dir);
 
-    // 1. Traverse metadata directory, collect enabled module IDs
     let enabled_modules = collect_enabled_modules(metadata_dir)?;
 
     if enabled_modules.is_empty() {
@@ -280,7 +273,6 @@ pub fn mount_modules_systemlessly(metadata_dir: &str, content_dir: &str) -> Resu
 
     info!("Found {} enabled module(s)", enabled_modules.len());
 
-    // 2. Initialize partition lowerdir lists
     let partition = vec!["vendor", "product", "system_ext", "odm", "oem"];
     let mut system_lowerdir: Vec<String> = Vec::new();
     let mut partition_lowerdir: HashMap<String, Vec<String>> = HashMap::new();
@@ -289,37 +281,39 @@ pub fn mount_modules_systemlessly(metadata_dir: &str, content_dir: &str) -> Resu
         partition_lowerdir.insert((*part).to_string(), Vec::new());
     }
 
-    // 3. Read module content from content directory
     for module_id in &enabled_modules {
         let module_content_path = Path::new(content_dir).join(module_id);
 
         if !module_content_path.exists() {
-            warn!("Module {} has no content directory, skipping", module_id);
+            info!("Module {}: active (No overlay partitions)", module_id);
             continue;
         }
 
-        info!("Processing module: {}", module_id);
+        let mut provided_parts = Vec::new();
 
-        // Collect system partition
         let system_path = module_content_path.join("system");
         if system_path.is_dir() {
             system_lowerdir.push(system_path.display().to_string());
-            info!("  + system/");
+            provided_parts.push("system");
         }
 
-        // Collect other partitions
         for part in &partition {
             let part_path = module_content_path.join(part);
-            if part_path.is_dir()
-                && let Some(v) = partition_lowerdir.get_mut(*part)
-            {
-                v.push(part_path.display().to_string());
-                info!("  + {}/", part);
+            if part_path.is_dir() {
+                if let Some(v) = partition_lowerdir.get_mut(*part) {
+                    v.push(part_path.display().to_string());
+                    provided_parts.push(part);
+                }
             }
+        }
+
+        if !provided_parts.is_empty() {
+            info!("Module {}: overlays [{}]", module_id, provided_parts.join(", "));
+        } else {
+            info!("Module {}: active (No overlay partitions)", module_id);
         }
     }
 
-    // 4. Mount partitions
     info!("Mounting partitions...");
 
     if let Err(e) = mount_partition("system", &system_lowerdir) {
@@ -332,6 +326,6 @@ pub fn mount_modules_systemlessly(metadata_dir: &str, content_dir: &str) -> Resu
         }
     }
 
-    info!("All partitions processed");
+    info!("All partitions processed successfully");
     Ok(())
 }

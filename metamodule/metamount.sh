@@ -4,54 +4,67 @@
 # Module mount handler for dual-directory mounting
 ############################################
 
-MODDIR="${0%/*}"
-. "$MODDIR"/utils.sh || exit 1
-IMG_FILE="$MODDIR/modules.img"
-MNT_DIR="$MODDIR/mnt"
+# Force canonical symlink path to prevent VFS double-mount collisions
+META_DIR="/data/adb/metamodule"
+
+. "$META_DIR"/utils.sh || exit 1
+IMG_FILE="$META_DIR/modules.img"
+MNT_DIR="$META_DIR/mnt"
 RW_ROOT="/data/adb/modules/.rw"
 PARTITIONS="system vendor product system_ext odm oem"
 MODULE_METADATA_DIR="/data/adb/modules"
+LOG_FILE="$META_DIR/overlayfsx.log"
 
-log "- Starting module mount process"
+log INFO "Starting module mount process"
 
 # Ensure ext4 image is mounted
 if ! mountpoint -q "$MNT_DIR" 2>/dev/null; then
-    log "- Image not mounted, mounting now..."
+    log INFO "Image not mounted, mounting now..."
 
-    # Check if image file exists
     if [ ! -f "$IMG_FILE" ]; then
-        log "- ERROR: Image file not found at $IMG_FILE"
+        log ERROR "Image file not found at $IMG_FILE"
         exit 1
     fi
 
-    # Create mount point
     mkdir -p "$MNT_DIR"
-
-    # Mount the ext4 image
     chcon u:object_r:ksu_file:s0 "$IMG_FILE" 2>/dev/null
     mount -t ext4 -o loop,rw,noatime "$IMG_FILE" "$MNT_DIR" || {
-        log "- ERROR: Failed to mount image"
+        log ERROR "Failed to mount image"
         exit 1
     }
-    log "- Image mounted successfully at $MNT_DIR"
+    log INFO "Image mounted successfully at $MNT_DIR"
 else
-    log "- Image already mounted at $MNT_DIR"
+    log INFO "Image already mounted at $MNT_DIR"
 fi
 
 # Binary path
-BINARY="$MODDIR/overlayfsx"
+BINARY="$META_DIR/overlayfsx"
 
 if [ ! -f "$BINARY" ]; then
-    log "- ERROR: Binary not found: $BINARY"
+    log ERROR "Binary not found: $BINARY"
     exit 1
 fi
 
-# Cleanup removed modules and modules with skip_mount from image
-log "- Checking for orphaned modules and skip_mount modules..."
+# Apply staged updates from the ext4 image before generating the mount tree
+log INFO "Applying pending module updates in image..."
+for update_dir in "$MNT_DIR"/*_update; do
+    if [ -d "$update_dir" ]; then
+        original_dir="${update_dir%_update}"
+        MODULE_NAME=$(basename "$original_dir")
+        log INFO "Swapping staged update for: $MODULE_NAME"
+
+        # Atomic swap: Delete old live module and rename the update
+        rm -rf "$original_dir"
+        mv "$update_dir" "$original_dir"
+    fi
+done
+
+# Cleanup orphaned/skip_mount modules from image
+log INFO "Checking for orphaned modules and skip_mount flags..."
 REMOVED_COUNT=0
 
 for module_dir in "$MNT_DIR"/*; do
-    if [ ! -d "$module_dir" ] || [ "$(basename "$module_dir")" = "lost+found" ]; then
+    if [ ! -d "$module_dir" ] || [ "$(basename "$module_dir")" = "lost+found" ] || echo "$module_dir" | grep -q "_update$"; then
         continue
     fi
 
@@ -71,21 +84,21 @@ for module_dir in "$MNT_DIR"/*; do
     fi
 
     if [ "$SHOULD_REMOVE" = true ]; then
-        log "- Removing $REMOVE_REASON module from image: $MODULE_NAME"
+        log INFO "Removing $REMOVE_REASON module from image: $MODULE_NAME"
         rm -rf "$module_dir"
         REMOVED_COUNT=$((REMOVED_COUNT + 1))
     fi
 done
 
 if [ $REMOVED_COUNT -gt 0 ]; then
-    log "- Removed $REMOVED_COUNT module(s) from image"
+    log INFO "Removed $REMOVED_COUNT module(s) from image"
 else
-    log "- No modules to remove from image"
+    log INFO "No modules to remove from image"
 fi
 
 # Apply SELinux contexts for .rw partition structures
 if [ -d "$RW_ROOT" ]; then
-    log "- Applying SELinux contexts for RW partition structures"
+    log INFO "Applying SELinux contexts for RW partition structures"
 
     for part in $PARTITIONS; do
         PART_DIR="$RW_ROOT/$part"
@@ -108,67 +121,32 @@ fi
 export MODULE_METADATA_DIR="/data/adb/modules"
 export MODULE_CONTENT_DIR="$MNT_DIR"
 
-log "- Metadata directory: $MODULE_METADATA_DIR"
-log "- Content directory: $MODULE_CONTENT_DIR"
-
-# Log module scan before execution
-log "- Scanning modules in content directory..."
-
-if [ -d "$MODULE_CONTENT_DIR" ]; then
-    for module in "$MODULE_CONTENT_DIR"/*/; do
-        if [ -d "$module" ]; then
-            module_name=$(basename "$module")
-            metadata_path="$MODULE_METADATA_DIR/$module_name"
-
-            # Check if metadata exists
-            if [ ! -d "$metadata_path" ]; then
-                log "- Module '$module_name': Orphaned (no metadata directory)"
-                continue
-            fi
-
-            # Check for disable flag
-            if [ -f "$metadata_path/disable" ]; then
-                log "- Module '$module_name': Skipped (disabled)"
-                continue
-            fi
-
-            # Check for skip_mount flag
-            if [ -f "$metadata_path/skip_mount" ]; then
-                log "- Module '$module_name': Skipped (skip_mount)"
-                continue
-            fi
-
-            # Check if module has partition directories
-            has_partition=false
-            for part in $PARTITIONS; do
-                if [ -d "$module/$part" ]; then
-                    has_partition=true
-                    break
-                fi
-            done
-
-            if [ "$has_partition" = false ]; then
-                log "- Module '$module_name': Skipped (no partition directories)"
-                continue
-            fi
-
-            log "- Module '$module_name': Ready for mounting"
-        fi
-    done
-else
-    log "- ERROR: Content directory not found: $MODULE_CONTENT_DIR"
-fi
-
-log "- Executing $BINARY"
-
-# Execute the mount binary
-"$BINARY"
+# Execute the mount binary and inject its output directly into the unified log file
+"$BINARY" >> "$LOG_FILE" 2>&1
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -ne 0 ]; then
-    log "- Mount failed with exit code $EXIT_CODE"
+    log ERROR "Mount failed with exit code $EXIT_CODE"
     exit $EXIT_CODE
 fi
 
-log "- Mount completed successfully"
+# Retrieve live mount JSON data to update the module.prop description dynamically
+log INFO "Analyzing mount state to update UI description..."
+INSPECT_JSON=$("$BINARY" inspect -r 2>/dev/null)
+
+if echo "$INSPECT_JSON" | grep -q '"status": "success"'; then
+    # Parse JSON raw via grep to avoid requiring jq dependency
+    MODULE_COUNT=$(echo "$INSPECT_JSON" | grep -o '"id":' | wc -l)
+    CONFLICT_COUNT=$(echo "$INSPECT_JSON" | grep -o '"total_conflicted": [0-9]*' | grep -o '[0-9]*')
+
+    HAS_CONFLICT="🟢 False"
+    if [ -n "$CONFLICT_COUNT" ] && [ "$CONFLICT_COUNT" -gt 0 ]; then
+        HAS_CONFLICT="☢️ True"
+    fi
+
+    NEW_DESC="📦 Modules Mounted: $MODULE_COUNT | File Conflicts: $HAS_CONFLICT | Next-Gen OverlayFS engine with real-time kernel inspection & native WebUI."
+
+    modify_prop "description" "$NEW_DESC" "$META_DIR/module.prop"
+fi
+
 exit 0

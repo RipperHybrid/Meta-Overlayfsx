@@ -4,13 +4,23 @@
 # Shared utility functions for module management
 ############################################
 
-LOG_FILE="/data/adb/metamodule/overlayfs.log"
+LOG_FILE="/data/adb/metamodule/overlayfsx.log"
 
-# Log messages to console and file
+# Unified smart logger (Handles level switching dynamically)
 log() {
-    [ ! -f "$LOG_FILE" ] && touch "$LOG_FILE"
-    echo "$1"
-    echo "$(date '+%d.%m.%y %T'): [overlayfsx] $1" >> "$LOG_FILE"
+    if [ "$#" -eq 2 ]; then
+        local level="$1"
+        local msg="$2"
+        echo "- $msg"
+        case "$level" in
+            INFO|WARN|ERROR)
+                [ ! -f "$LOG_FILE" ] && touch "$LOG_FILE"
+                echo "[$level overlayfsx::script] $msg" >> "$LOG_FILE"
+                ;;
+        esac
+    else
+        echo "- $1"
+    fi
 }
 
 # Extract property value from file
@@ -26,34 +36,60 @@ get_prop() {
     grep "^$prop=" "$target_file" | cut -d'=' -f2 || echo "unknown"
 }
 
+# Safely modify module properties without breaking line structures
+modify_prop() {
+    local prop_key="$1"
+    local prop_value="$2"
+    local target_file="${3:-$MODDIR/module.prop}"
+
+    if [ ! -f "$target_file" ]; then
+        log ERROR "File $target_file not found."
+        return 1
+    fi
+
+    if grep -q "^$prop_key=" "$target_file"; then
+        local safe_value=$(printf '%s\n' "$prop_value" | sed 's/[~&]/\\&/g')
+        sed -i "s~^$prop_key=.*~$prop_key=$safe_value~" "$target_file" || {
+            log ERROR "Failed to modify $prop_key in $(basename "$target_file")"
+            return 1
+        }
+
+        log INFO "Set $prop_key to $prop_value in $(basename "$target_file")"
+    else
+        log WARN "Property $prop_key not found in $(basename "$target_file"), skipping set"
+    fi
+}
+
 # Mount ext4 image if not already mounted
 ensure_image_mounted() {
     if ! mountpoint -q "$MNT_DIR" 2>/dev/null; then
-        log "- Mounting modules image"
+        log "Mounting modules image"
         mkdir -p "$MNT_DIR"
         chcon u:object_r:ksu_file:s0 "$IMG_FILE" 2>/dev/null
         mount -t ext4 -o loop,rw,noatime "$IMG_FILE" "$MNT_DIR" || {
-            log "- Failed to mount modules image" && exit 1
+            log "Failed to mount modules image" && exit 1
         }
-        log "- Image mounted successfully"
+        log "Image mounted successfully"
     else
-        log "- Image already mounted"
+        log "Image already mounted"
     fi
 }
 
 # Determine whether this module should be moved into the ext4 image
 module_requires_overlay_move() {
     if [ -f "$MODPATH/skip_mount" ]; then
-        log "- skip_mount flag detected; keeping files under /data/adb/modules"
+        log "skip_mount flag detected; keeping files under /data/adb/modules"
         return 1
     fi
 
-    if [ ! -d "$MODPATH/system" ]; then
-        log "- No system/ directory detected; keeping files under /data/adb/modules"
-        return 1
-    fi
+    for part in system vendor product system_ext odm oem; do
+        if [ -d "$MODPATH/$part" ]; then
+            return 0
+        fi
+    done
 
-    return 0
+    log "No overlay dirs found; keeping module in /data/adb/modules"
+    return 1
 }
 
 # Copy SELinux contexts from src tree to destination by mirroring each entry
@@ -93,7 +129,7 @@ copy_selinux_contexts() {
 
 # Check for file conflicts with other installed modules
 check_conflicts() {
-    log "- Scanning for potential file conflicts..."
+    log "Scanning for potential file conflicts..."
     local temp_conflicts="/data/local/tmp/overlayfsx_conflicts_$$.tmp"
     rm -f "$temp_conflicts"
 
@@ -109,6 +145,7 @@ check_conflicts() {
 
                     [ "$OTHER_MOD" = "$MODID" ] && continue
                     [ "$OTHER_MOD" = "lost+found" ] && continue
+                    [ "$OTHER_MOD" = "${MODID}_update" ] && continue
 
                     if [ -f "$OTHER_MOD_DIR/$REL_PATH" ]; then
                         FILENAME="$(basename "$REL_PATH")"
@@ -120,7 +157,7 @@ check_conflicts() {
     done
 
     if [ -f "$temp_conflicts" ]; then
-        log "- Warning: File conflicts detected at the exact same mount path!"
+        log "File conflicts detected at the exact same mount path!"
 
         awk -F'|' '{
             mod=$1
@@ -128,78 +165,71 @@ check_conflicts() {
             if (!seen[mod, file]) {
                 seen[mod, file] = 1
                 count[mod]++
-                if (count[mod] <= 5) {
-                    if (count[mod] == 1) {
-                        mods[mod] = file
-                    } else {
-                        mods[mod] = mods[mod] ", " file
-                    }
+                if (count[mod] <= 3) {
+                    files_arr[mod, count[mod]] = file
                 }
             }
         } END {
-            for (m in mods) {
-                if (count[m] > 5) {
-                    mods[m] = mods[m] " and " (count[m] - 5) " more"
+            for (mod in count) {
+                print "  [ " mod " ] - " count[mod] " file(s)"
+
+                for (i = 1; i <= count[mod] && i <= 3; i++) {
+                    if (i == count[mod] || (i == 3 && count[mod] == 3)) {
+                        print "   └── " files_arr[mod, i]
+                    } else if (i == 3 && count[mod] > 3) {
+                        print "   ├── " files_arr[mod, i]
+                        print "   └── ...and " (count[mod] - 3) " more"
+                    } else {
+                        print "   ├── " files_arr[mod, i]
+                    }
                 }
-                print m "|" count[m] "|" mods[m]
             }
-        }' "$temp_conflicts" | while IFS='|' read -r mod_name file_count files; do
-            log "  -> [$mod_name] matches $file_count file(s): $files"
+        }' "$temp_conflicts" | while IFS= read -r log_line; do
+            log "$log_line"
         done
 
-        log "- Note: Both exist in their module folders, but the last one mounted will shadow (overwrite) the other."
+        log "Note: Both exist in their module folders, but the last one mounted will shadow (overwrite) the other."
         rm -f "$temp_conflicts"
     else
-        log "- No file conflicts found."
+        log "No file conflicts found."
     fi
 }
 
-# Post-installation: move partition directories to ext4 image
+# Post-installation: stage module payload securely
 post_install_to_image() {
-    log "- Moving module content to image"
+    log "Moving module content to image"
 
-    # Set permissions on mount directory
     if [ -d "$MNT_DIR" ]; then
         chmod 755 "$MNT_DIR" 2>/dev/null || true
     fi
 
-    MOD_IMG_DIR="$MNT_DIR/$MODID"
+    # Always stage to a pending update folder.
+    # Because this folder is not actively mounted by OverlayFS, the VFS cache is 100% safe.
+    log "Staging payload to ${MODID}_update."
+    MOD_IMG_DIR="$MNT_DIR/${MODID}_update"
 
-    # Remove existing module directory if it exists
-    if [ -d "$MOD_IMG_DIR" ]; then
-        log "- Removing old module from image"
-        rm -rf "$MOD_IMG_DIR"
-    fi
-
+    # Nuke any failed previous staging attempts to ensure a clean slate
+    rm -rf "$MOD_IMG_DIR"
     mkdir -p "$MOD_IMG_DIR"
-    if [ -d "$MOD_IMG_DIR" ]; then
-        chmod 755 "$MOD_IMG_DIR" 2>/dev/null || true
-    fi
+    chmod 755 "$MOD_IMG_DIR" 2>/dev/null || true
 
-    # Copy all partition directories
     for partition in system vendor product system_ext odm oem; do
-        if [ -d "$MODPATH/$partition" ]; then
-            log "- Copying $partition/ to image"
+        SRC_DIR="$MODPATH/$partition"
+        if [ -d "$SRC_DIR" ]; then
+            log "Copying $partition/ to staging area"
 
-            DEST_DIR="$MOD_IMG_DIR/$partition"
-
-            # Remove existing partition directory if it exists
-            if [ -d "$DEST_DIR" ]; then
-                rm -rf "$DEST_DIR"
-            fi
-
-            # Copy to preserve all attributes including SELinux
-            cp -af "$MODPATH/$partition" "$MOD_IMG_DIR/" || {
-                log "- Warning!: Failed to copy $partition"
+            # Since this is an unmounted staging dir, we can just aggressively copy the whole folder
+            cp -af "$SRC_DIR" "$MOD_IMG_DIR/" || {
+                log "Failed to copy $partition"
                 continue
             }
 
-            # Copy SELinux contexts from original source to destination
-            copy_selinux_contexts "$MODPATH/$partition" "$DEST_DIR"
+            DEST_DIR="$MOD_IMG_DIR/$partition"
+            copy_selinux_contexts "$SRC_DIR" "$DEST_DIR"
         fi
     done
 
-    log "- Module content copied to image successfully"
+    log "Module content staged to image successfully"
 }
 
 # Mark directory for REPLACE mode
@@ -207,4 +237,33 @@ mark_replace() {
     replace_target="$1"
     mkdir -p "$replace_target"
     setfattr -n trusted.overlay.opaque -v y "$replace_target" 2>/dev/null || true
+}
+
+chooseport() {
+  # Original idea by chainfire and ianmacd @xda-developers
+  [ "$1" ] && local delay=$1 || local delay=10
+  local retry_count=0
+  local max_retries=2
+  if [ -z "$TMPDIR" ]; then TMPDIR="/data/local/tmp"; fi
+  mkdir -p "$TMPDIR"
+  while true; do
+    local count=0
+    while true; do
+      timeout $delay /system/bin/getevent -lqc 1 2>&1 > $TMPDIR/events &
+      sleep 0.5; count=$((count + 1))
+      if (`grep -q 'KEY_VOLUMEUP *DOWN' $TMPDIR/events`); then
+        return 0
+      elif (`grep -q 'KEY_VOLUMEDOWN *DOWN' $TMPDIR/events`); then
+        return 1
+      fi
+      [ $count -gt 12 ] && break
+    done
+    retry_count=$((retry_count + 1))
+    if [ $retry_count -gt $max_retries ]; then
+      echo "  > Volume key not detected after $max_retries attempts. Auto-selecting Current Option."
+      return 0
+    else
+      echo "  > Volume key not detected. Attempt $retry_count of $max_retries. Try again"
+    fi
+  done
 }

@@ -14,8 +14,8 @@ unzip -o "$ZIPFILE" module.prop -d "$TMPDIR" >&2
 MODNAME=$(get_prop name "$TMPDIR/module.prop")
 MODID=$(get_prop id "$TMPDIR/module.prop")
 
-log "- Using overlayfsx metainstall"
-log "- Installing module: $MODNAME (ID: $MODID)"
+log "Using overlayfsx metainstall"
+log "Installing module: $MODNAME (ID: $MODID)"
 
 # Install module using KernelSU's install_module function
 install_module
@@ -28,9 +28,9 @@ if module_requires_overlay_move; then
 
     # Move files to image
     post_install_to_image
-    log "- Reboot required for changes to take effect"
+    log "Reboot required for changes to take effect"
 else
-    log "- Skipping move to modules image"
+    log "Skipping move to modules image"
 fi
 
-log "- $MODNAME installation complete"
+log "$MODNAME installation complete"

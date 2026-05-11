@@ -2,179 +2,139 @@ export default class AboutPage {
     constructor(app) {
         this.app = app;
         this.moduleInfo = null;
-
+        this.bannerBase64 = '';
         this.maintainer = {
             name: 'AshBorn',
-            role: 'WebUI Development',
-            handle: 'GitHub: @RipperHybrid',
-            icon: 'user-astronaut'
+            role: 'Fork Maintainer (WebUI & Core)',
+            handle: '@RipperHybrid',
+            icon: 'user-astronaut',
+            highlight: true
         };
-
         this.contributors = [
-            { name: 'weishu', role: 'KernelSU Creator', icon: 'user-tie' },
-            { name: 'tiann', role: 'KernelSU Core', icon: 'user-tie' },
-            { name: 'Ylarod', role: 'Magic Mount', icon: 'user' },
-            { name: 'Wang Han', role: 'GitHub: @aviraxp', icon: 'user' },
-            { name: '7a72', role: 'GitHub: @7a72', icon: 'user' }
+            { name: 'weishu / tiann', role: 'KernelSU Creator & Core', icon: 'user-tie' },
+            { name: 'Ylarod',         role: 'Magic Mount',              icon: 'user' },
+            { name: 'Wang Han',       role: 'GitHub: @aviraxp',         icon: 'user' },
+            { name: '7a72',           role: 'GitHub: @7a72',            icon: 'user' },
         ];
-    }
-
-    renderContributorCard(data, isHighlight = false) {
-        const style = isHighlight
-            ? 'margin-top: 1rem; border-color: var(--primary-color); background: rgba(124, 58, 237, 0.1);'
-            : '';
-
-        const extraInfo = data.handle
-            ? `<div class="contributor-username" style="opacity: 0.7; font-size: 0.8rem;">${data.handle}</div>`
-            : '';
-
-        return `
-            <div class="contributor-card" style="${style}">
-                <div class="contributor-icon">
-                    ${this.app.icon(data.icon)}
-                </div>
-                <div class="contributor-info">
-                    <div class="contributor-name">${data.name}</div>
-                    <div class="contributor-username">${data.role}</div>
-                    ${extraInfo}
-                </div>
-            </div>
-        `;
     }
 
     async render() {
         this.moduleInfo = this.getModuleInfo();
+        const moduleId = this.moduleInfo.id && this.moduleInfo.id !== '—' ? this.moduleInfo.id : 'overlayfsx';
+
+        try {
+            const rawB64 = await this.app.utils.execCommand(`base64 "${CONFIG.MODULES_DIR}/${moduleId}/banner" 2>/dev/null`);
+            if (rawB64) {
+                const cleanB64 = rawB64.replace(/\s+/g, '');
+                if (cleanB64.length > 100) {
+                    this.bannerBase64 = `data:image/png;base64,${cleanB64}`;
+                }
+            }
+        } catch (err) {}
+
+        return this.buildHTML();
+    }
+
+    buildHTML() {
+        const info = this.moduleInfo;
+        const bannerHtml = this.bannerBase64 ? `<img src="${this.bannerBase64}" class="about-banner">` : '';
 
         return `
-            <div class="settings-page">
-                <div class="settings-header">
-                    <h2>${this.app.icon('info-circle')} About</h2>
+        <div class="about-page">
+            ${bannerHtml}
+
+            <div class="s-plane">
+                <div class="s-plane-head">
+                    <div class="s-plane-icon icon-blue">
+                        ${this.app.icon('layer-group')}
+                    </div>
+                    <div class="s-plane-title">Module</div>
                 </div>
-
-                <div class="settings-sections">
-                    <section class="settings-section">
-                        <div class="section-header">
-                            ${this.app.icon('layer-group')}
-                            <h3>Module Information</h3>
+                ${[
+                    { k: 'Name',        v: info.name || '—' },
+                    { k: 'Version',     v: info.version || '—' },
+                    { k: 'Version Code',v: info.versionCode || '—' },
+                    { k: 'Author',      v: info.author || '—' },
+                    { k: 'Module ID',   v: info.id || '—' },
+                    { k: 'Type',        v: info.metamodule === '1' ? 'Meta Module' : 'Regular Module' },
+                ].map(row => `
+                    <div class="s-row cursor-default">
+                        <div class="s-row-body">
+                            <div class="s-row-label">${row.k}</div>
                         </div>
-
-                        <div class="about-info">
-                            <div class="about-item">
-                                <span class="about-label">Module Name:</span>
-                                <span class="about-value">${this.moduleInfo.name || 'Unknown'}</span>
-                            </div>
-                            <div class="about-item">
-                                <span class="about-label">Version:</span>
-                                <span class="about-value">${this.moduleInfo.version || 'Unknown'}</span>
-                            </div>
-                            <div class="about-item">
-                                <span class="about-label">Version Code:</span>
-                                <span class="about-value">${this.moduleInfo.versionCode || 'Unknown'}</span>
-                            </div>
-                            <div class="about-item">
-                                <span class="about-label">Author:</span>
-                                <span class="about-value">${this.moduleInfo.author || 'Unknown'}</span>
-                            </div>
-                            <div class="about-item">
-                                <span class="about-label">Module ID:</span>
-                                <span class="about-value">${this.moduleInfo.id || 'Unknown'}</span>
-                            </div>
-                            <div class="about-item">
-                                <span class="about-label">Type:</span>
-                                <span class="about-value">${this.moduleInfo.metamodule === '1' ? 'Meta Module' : 'Regular Module'}</span>
-                            </div>
-                            <div class="about-item">
-                                <span class="about-label">Status:</span>
-                                <span class="about-value status-badge ${this.moduleInfo.enabled === 'true' ? 'status-success' : 'status-error'}">
-                                    ${this.moduleInfo.enabled === 'true' ? 'Enabled' : 'Disabled'}
-                                </span>
-                            </div>
-                        </div>
-                    </section>
-
-                    <section class="settings-section">
-                        <div class="section-header">
-                            ${this.app.icon('laptop-code')}
-                            <h3>WebUI & Modifications</h3>
-                        </div>
-
-                        ${this.renderContributorCard(this.maintainer, true)}
-
-                        <div class="info-box warning" style="margin-top: 1rem;">
-                            ${this.app.icon('exclamation-triangle')}
-                            <div>
-                                <strong>Note:</strong> This WebUI and specific module tweaks are maintained by <strong>${this.maintainer.name}</strong>.
-                                Please report UI bugs to ${this.maintainer.name}, distinct from the core project.
-                            </div>
-                        </div>
-                    </section>
-
-                    <section class="settings-section">
-                        <div class="section-header">
-                            ${this.app.icon('book')}
-                            <h3>What is Meta OverlayFS?</h3>
-                        </div>
-
-                        <div class="info-box info">
-                            ${this.app.icon('lightbulb')}
-                            <div>
-                                <p style="margin-bottom: 0.8rem;">
-                                    Meta OverlayFS is an advanced KernelSU module that uses an image file and overlay filesystem
-                                    to manage modules separately from the main modules directory.
-                                </p>
-                                <p style="margin-bottom: 0.8rem;">
-                                    This approach allows for better organization, isolation, and management of modules
-                                    without directly modifying the core system directories.
-                                </p>
-                            </div>
-                        </div>
-                    </section>
-
-                    <section class="settings-section">
-                        <div class="section-header">
-                            ${this.app.icon('users')}
-                            <h3>Original Base Project</h3>
-                        </div>
-
-                        <div class="contributors-grid">
-                            ${this.contributors.map(c => this.renderContributorCard(c)).join('')}
-                        </div>
-
-                        <div class="info-box info" style="margin-top: 1rem;">
-                            ${this.app.icon('heart')}
-                            <div>
-                                Special thanks to the original creators who built the Meta OverlayFS foundation.
-                            </div>
-                        </div>
-                    </section>
-
-                    <section class="settings-section">
-                        <div class="section-header">
-                            ${this.app.icon('code')}
-                            <h3>Technical Details</h3>
-                        </div>
-
-                        <div class="about-info">
-                            <div class="about-item">
-                                <span class="about-label">Module Directory:</span>
-                                <span class="about-value path">${this.moduleInfo.moduleDir || 'Unknown'}</span>
-                            </div>
-                            <div class="about-item">
-                                <span class="about-label">Image Path:</span>
-                                <span class="about-value path">${CONFIG.IMG_FILE}</span>
-                            </div>
-                            <div class="about-item">
-                                <span class="about-label">Mount Point:</span>
-                                <span class="about-value path">${CONFIG.MNT_DIR}</span>
-                            </div>
-                            <div class="about-item">
-                                <span class="about-label">Filesystem:</span>
-                                <span class="about-value">ext4</span>
-                            </div>
-                        </div>
-                    </section>
+                        <span class="s-row-value">${row.v}</span>
+                    </div>
+                `).join('')}
+                <div class="s-row cursor-default border-none">
+                    <div class="s-row-body">
+                        <div class="s-row-label">Status</div>
+                    </div>
+                    <span class="s-row-value ${info.enabled === 'true' ? 'ok' : 'bad'}">
+                        ${info.enabled === 'true' ? 'Enabled' : 'Disabled'}
+                    </span>
                 </div>
             </div>
+
+            <div class="s-plane">
+                <div class="s-plane-head">
+                    <div class="s-plane-icon icon-violet">
+                        ${this.app.icon('laptop-code')}
+                    </div>
+                    <div class="s-plane-title">WebUI & Modifications</div>
+                </div>
+                <div class="contributor-card">
+                    <div class="contributor-avatar highlight">
+                        ${this.app.icon(this.maintainer.icon)}
+                    </div>
+                    <div class="contributor-info">
+                        <div class="contributor-name">${this.maintainer.name}</div>
+                        <div class="contributor-role">${this.maintainer.role}</div>
+                        <div class="contributor-handle">${this.maintainer.handle}</div>
+                    </div>
+                </div>
+                <div class="info-banner warn border-top-subtle">
+                    ${this.app.icon('exclamation-triangle')}
+                    <span>Problem with this fork project? Report it to <strong>${this.maintainer.name}</strong>. Do not report bugs for this modified fork to the original creators.</span>
+                </div>
+            </div>
+
+            <div class="s-plane">
+                <div class="s-plane-head">
+                    <div class="s-plane-icon icon-blue">
+                        ${this.app.icon('book')}
+                    </div>
+                    <div class="s-plane-title">What is Meta OverlayFS?</div>
+                </div>
+                <div class="info-banner pad-14 border-none">
+                    ${this.app.icon('lightbulb')}
+                    <span>An advanced KernelSU module that uses an image file and overlay filesystem to manage modules separately from the main modules directory — enabling better isolation and organization without touching core system directories.</span>
+                </div>
+            </div>
+
+            <div class="s-plane">
+                <div class="s-plane-head">
+                    <div class="s-plane-icon icon-green">
+                        ${this.app.icon('users')}
+                    </div>
+                    <div class="s-plane-title">Original Base Project</div>
+                </div>
+                ${this.contributors.map(c => `
+                    <div class="contributor-card">
+                        <div class="contributor-avatar">
+                            ${this.app.icon(c.icon)}
+                        </div>
+                        <div class="contributor-info">
+                            <div class="contributor-name">${c.name}</div>
+                            <div class="contributor-role">${c.role}</div>
+                        </div>
+                    </div>
+                `).join('')}
+                <div class="info-banner ok border-top-subtle">
+                    ${this.app.icon('heart')}
+                    <span>Thanks to the original creators who built the Meta OverlayFS foundation.</span>
+                </div>
+            </div>
+        </div>
         `;
     }
 
@@ -182,30 +142,11 @@ export default class AboutPage {
         try {
             if (typeof ksu !== 'undefined' && typeof ksu.moduleInfo === 'function') {
                 const info = ksu.moduleInfo();
-                if (info) {
-                    if (typeof info === 'string') {
-                        return JSON.parse(info);
-                    }
-                    return info;
-                }
+                if (info) return typeof info === 'string' ? JSON.parse(info) : info;
             }
-        } catch (error) {
-            console.error('Error getting module info:', error);
-        }
-
-        return {
-            id: 'Unknown',
-            moduleDir: 'Unknown',
-            name: 'Unknown',
-            version: 'Unknown',
-            versionCode: 'Unknown',
-            author: 'Unknown',
-            metamodule: '0',
-            enabled: 'false'
-        };
+        } catch (err) {}
+        return { id: '—', moduleDir: '—', name: '—', version: '—', versionCode: '—', author: '—', metamodule: '0', enabled: 'false' };
     }
 
-    async bindEvents() {
-        return;
-    }
+    async bindEvents() {}
 }
