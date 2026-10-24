@@ -27,8 +27,11 @@ if module_requires_overlay_move; then
     check_conflicts
 
     # Move files to image
-    post_install_to_image
-    log "Reboot required for changes to take effect"
+    if post_install_to_image; then
+        log "Reboot required for changes to take effect"
+    else
+        log ERROR "Module could not be staged in the image; the previous version (if any) stays active"
+    fi
 else
     log "Skipping move to modules image"
 fi

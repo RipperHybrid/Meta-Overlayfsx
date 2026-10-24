@@ -23,6 +23,113 @@ log() {
     fi
 }
 
+############################################
+# Image safety helpers
+############################################
+
+# Persistent settings/requests live OUTSIDE the module directory, because KernelSU
+# replaces the whole module directory on every update.
+CONF_DIR="/data/adb/overlayfsx.d"
+DEFAULT_IMG_SIZE_MB=2048
+MIN_IMG_SIZE_MB=256
+MAX_IMG_SIZE_MB=65536
+
+# True if $1 is a non-empty string of digits.
+is_uint() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    return 0
+}
+
+# Available space (KiB) on the filesystem that contains $1.
+avail_kb() {
+    df -Pk "$1" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
+# Size of a file in MiB (rounded down). Prints 0 if the file is missing.
+file_size_mb() {
+    [ -f "$1" ] || { echo 0; return; }
+    echo $(( $(stat -c%s "$1" 2>/dev/null || echo 0) / 1048576 ))
+}
+
+# Run e2fsck on an UNMOUNTED image.
+#   preen : fast; only does real work if the filesystem was not cleanly unmounted
+#   force : full check, repairs automatically (falls back to -fy)
+#   check : read-only full check, never modifies the image
+# Returns 0 when the image is clean/repaired, non-zero when it is still broken.
+# When e2fsck is not available the check is skipped (returns 0 with a warning).
+fsck_image() {
+    local img="$1" mode="${2:-preen}" rc=0
+    if ! command -v e2fsck >/dev/null 2>&1; then
+        log WARN "e2fsck not available, skipping filesystem check"
+        return 0
+    fi
+    case "$mode" in
+        preen) e2fsck -p "$img" >/dev/null 2>&1; rc=$? ;;
+        check) e2fsck -fn "$img" >/dev/null 2>&1; rc=$? ;;
+        force)
+            e2fsck -fp "$img" >/dev/null 2>&1; rc=$?
+            if [ "$rc" -ge 4 ]; then
+                log WARN "e2fsck preen failed (rc=$rc), retrying with -fy"
+                e2fsck -fy "$img" >/dev/null 2>&1; rc=$?
+            fi
+            ;;
+    esac
+    # 0 = clean, 1 = errors corrected, 2 = corrected (reboot advised; irrelevant for an image file)
+    [ "$rc" -le 2 ] && return 0
+    log ERROR "e2fsck ($mode) reported rc=$rc for $img"
+    return 1
+}
+
+# Apply a resize request written by the WebUI ($CONF_DIR/resize_mb).
+# MUST only be called while the image is NOT mounted. The request is consumed
+# first, so a failing resize can never retry on every boot.
+apply_pending_resize() {
+    local img="$1" req_file="$CONF_DIR/resize_mb" req cur
+    [ -f "$req_file" ] || return 0
+
+    req=$(tr -dc '0-9' < "$req_file" 2>/dev/null)
+    rm -f "$req_file"
+
+    if ! is_uint "$req" || [ "$req" -lt "$MIN_IMG_SIZE_MB" ] || [ "$req" -gt "$MAX_IMG_SIZE_MB" ]; then
+        log WARN "Ignoring invalid resize request (allowed: ${MIN_IMG_SIZE_MB}-${MAX_IMG_SIZE_MB} MB)"
+        return 1
+    fi
+    if ! command -v resize2fs >/dev/null 2>&1; then
+        log WARN "resize2fs not available, resize request ignored"
+        return 1
+    fi
+    [ -f "$img" ] || return 1
+
+    cur=$(file_size_mb "$img")
+    [ "$req" -eq "$cur" ] && return 0
+    log INFO "Resizing image: ${cur} MB -> ${req} MB"
+
+    # resize2fs refuses to work on an image that was not freshly checked.
+    fsck_image "$img" force || { log ERROR "Resize aborted: image check failed"; return 1; }
+
+    if [ "$req" -gt "$cur" ]; then
+        truncate -s "${req}M" "$img" || { log ERROR "Resize failed: cannot grow image file"; return 1; }
+        if ! resize2fs "$img" >/dev/null 2>&1; then
+            log ERROR "resize2fs failed, restoring previous file size"
+            truncate -s "${cur}M" "$img"
+            return 1
+        fi
+    else
+        # Shrink: filesystem first (fails safely when data does not fit), file second.
+        if ! resize2fs "$img" "${req}M" >/dev/null 2>&1; then
+            log ERROR "Not enough room to shrink to ${req} MB, image left unchanged"
+            return 1
+        fi
+        truncate -s "${req}M" "$img" || { log ERROR "Failed to truncate image after shrink"; return 1; }
+    fi
+
+    fsck_image "$img" check || { log ERROR "Image check failed after resize"; return 1; }
+    log INFO "Image resized to ${req} MB"
+    return 0
+}
+
 # Extract property value from file
 get_prop() {
     prop="$1"
@@ -196,6 +303,9 @@ check_conflicts() {
 }
 
 # Post-installation: stage module payload securely
+# The payload is built in "<id>_update.tmp" and only renamed to "<id>_update" once EVERY
+# partition was copied. A failed or interrupted copy therefore can never replace a
+# working module at the next boot.
 post_install_to_image() {
     log "Moving module content to image"
 
@@ -203,33 +313,56 @@ post_install_to_image() {
         chmod 755 "$MNT_DIR" 2>/dev/null || true
     fi
 
-    # Always stage to a pending update folder.
-    # Because this folder is not actively mounted by OverlayFS, the VFS cache is 100% safe.
+    local STAGE_DIR="$MNT_DIR/${MODID}_update"
+    local TMP_DIR="$STAGE_DIR.tmp"
+
+    # Need room for the payload (+ margin) inside the image.
+    local need_kb=0 free_kb part kb
+    for part in system vendor product system_ext odm oem; do
+        [ -d "$MODPATH/$part" ] || continue
+        kb=$(du -sk "$MODPATH/$part" 2>/dev/null | awk '{print $1}')
+        is_uint "$kb" && need_kb=$((need_kb + kb))
+    done
+    free_kb=$(avail_kb "$MNT_DIR")
+    if is_uint "$free_kb" && [ "$free_kb" -lt $((need_kb + 4096)) ]; then
+        log ERROR "Not enough free space in modules image (need ~$((need_kb / 1024)) MB, free $((free_kb / 1024)) MB). Use the WebUI to enlarge the image."
+        return 1
+    fi
+
     log "Staging payload to ${MODID}_update."
-    MOD_IMG_DIR="$MNT_DIR/${MODID}_update"
 
-    # Nuke any failed previous staging attempts to ensure a clean slate
-    rm -rf "$MOD_IMG_DIR"
-    mkdir -p "$MOD_IMG_DIR"
-    chmod 755 "$MOD_IMG_DIR" 2>/dev/null || true
+    # Nuke leftovers of failed previous staging attempts to ensure a clean slate
+    rm -rf "$TMP_DIR"
+    mkdir -p "$TMP_DIR" || { log ERROR "Cannot create staging directory"; return 1; }
+    chmod 755 "$TMP_DIR" 2>/dev/null || true
 
-    for partition in system vendor product system_ext odm oem; do
-        SRC_DIR="$MODPATH/$partition"
-        if [ -d "$SRC_DIR" ]; then
-            log "Copying $partition/ to staging area"
+    local SRC_DIR DEST_DIR
+    for part in system vendor product system_ext odm oem; do
+        SRC_DIR="$MODPATH/$part"
+        [ -d "$SRC_DIR" ] || continue
+        log "Copying $part/ to staging area"
 
-            # Since this is an unmounted staging dir, we can just aggressively copy the whole folder
-            cp -af "$SRC_DIR" "$MOD_IMG_DIR/" || {
-                log "Failed to copy $partition"
-                continue
-            }
-
-            DEST_DIR="$MOD_IMG_DIR/$partition"
-            copy_selinux_contexts "$SRC_DIR" "$DEST_DIR"
+        if ! cp -af "$SRC_DIR" "$TMP_DIR/"; then
+            log ERROR "Failed to copy $part, staging aborted (previous version stays active)"
+            rm -rf "$TMP_DIR"
+            return 1
         fi
+
+        DEST_DIR="$TMP_DIR/$part"
+        copy_selinux_contexts "$SRC_DIR" "$DEST_DIR"
     done
 
+    # Publish the finished payload (rename is atomic inside one filesystem).
+    rm -rf "$STAGE_DIR"
+    if ! mv "$TMP_DIR" "$STAGE_DIR"; then
+        log ERROR "Failed to publish staged payload"
+        rm -rf "$TMP_DIR"
+        return 1
+    fi
+    sync
+
     log "Module content staged to image successfully"
+    return 0
 }
 
 # Mark directory for REPLACE mode

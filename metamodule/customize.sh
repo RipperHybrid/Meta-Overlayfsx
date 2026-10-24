@@ -34,30 +34,93 @@ chmod 755 "$MODPATH/overlayfsx" || abort "- Failed to set permissions"
 ui_print "- Architecture-specific binary installed successfully"
 
 # 2. Ext4 Image Setup (Creation or Reuse)
+. "$MODPATH/utils.sh"
+
+# During installation every log line goes to the installer output.
+log() {
+    if [ "$#" -eq 2 ]; then
+        case "$1" in
+            ERROR) ui_print "! $2" ;;
+            WARN)  ui_print "- WARNING: $2" ;;
+            *)     ui_print "- $2" ;;
+        esac
+    else
+        ui_print "- $1"
+    fi
+}
+
 IMG_FILE="$MODPATH/modules.img"
-IMG_SIZE_MB=2048
 EXISTING_IMG="/data/adb/modules/$MODID/modules.img"
 IS_FIRST_INSTALL=false
 
+# Image size for NEW images can be chosen with: echo 4096 > /data/adb/overlayfsx.d/img_size_mb
+IMG_SIZE_MB=$DEFAULT_IMG_SIZE_MB
+if [ -f "$CONF_DIR/img_size_mb" ]; then
+    REQ_SIZE=$(tr -dc '0-9' < "$CONF_DIR/img_size_mb" 2>/dev/null)
+    if is_uint "$REQ_SIZE" && [ "$REQ_SIZE" -ge "$MIN_IMG_SIZE_MB" ] && [ "$REQ_SIZE" -le "$MAX_IMG_SIZE_MB" ]; then
+        IMG_SIZE_MB=$REQ_SIZE
+    else
+        ui_print "- Ignoring invalid $CONF_DIR/img_size_mb, using ${IMG_SIZE_MB} MB"
+    fi
+fi
+
+DATA_FREE_KB=$(avail_kb /data)
+is_uint "$DATA_FREE_KB" || DATA_FREE_KB=0
+
 if [ -f "$EXISTING_IMG" ]; then
     ui_print "- Reusing modules image from previous install"
-    # Preserve synced modules during updates
-    "$MODPATH/overlayfsx" xcp "$EXISTING_IMG" "$IMG_FILE" || abort "- Failed to copy existing modules image"
+
+    # The old module directory is deleted by KernelSU after this update, so the copy made
+    # here becomes the ONLY copy. It is therefore verified before the install may continue.
+    EXISTING_USED_KB=$(du -k "$EXISTING_IMG" 2>/dev/null | awk '{print $1}')
+    is_uint "$EXISTING_USED_KB" || EXISTING_USED_KB=0
+    NEED_KB=$((EXISTING_USED_KB + 65536))
+    if [ "$DATA_FREE_KB" -lt "$NEED_KB" ]; then
+        abort "! Not enough free storage in /data: need $((NEED_KB / 1024)) MB, have $((DATA_FREE_KB / 1024)) MB. Nothing was changed."
+    fi
+
+    # Make sure the old image is not being written to while it is copied.
+    sync
+
+    if ! "$MODPATH/overlayfsx" xcp "$EXISTING_IMG" "$IMG_FILE"; then
+        rm -f "$IMG_FILE"
+        abort "! Failed to copy existing modules image. Nothing was changed."
+    fi
+
+    OLD_BYTES=$(stat -c%s "$EXISTING_IMG" 2>/dev/null)
+    NEW_BYTES=$(stat -c%s "$IMG_FILE" 2>/dev/null)
+    if [ -z "$OLD_BYTES" ] || [ "$OLD_BYTES" != "$NEW_BYTES" ]; then
+        rm -f "$IMG_FILE"
+        abort "! Copied image has a different size ($NEW_BYTES vs $OLD_BYTES bytes). Nothing was changed."
+    fi
+
+    ui_print "- Verifying copied image"
+    if ! fsck_image "$IMG_FILE" force; then
+        rm -f "$IMG_FILE"
+        abort "! Existing modules image is damaged and could not be repaired. Update cancelled, your current install is untouched."
+    fi
+    ui_print "- Image verified"
 else
-    ui_print "- Creating 2GB ext4 image for module storage"
+    ui_print "- Creating ${IMG_SIZE_MB} MB ext4 image for module storage"
     IS_FIRST_INSTALL=true
 
-    # Create sparse file (Logical 2GB, takes 0 bytes on disk initially)
+    if [ "$DATA_FREE_KB" -lt 131072 ]; then
+        abort "! Not enough free storage in /data (need at least 128 MB, have $((DATA_FREE_KB / 1024)) MB)."
+    fi
+
+    # Create sparse file (logical size only, takes ~0 bytes on disk initially)
     truncate -s ${IMG_SIZE_MB}M "$IMG_FILE" || abort "- Failed to create image file"
-    /system/bin/mke2fs -t ext4 -O ^has_journal -F "$IMG_FILE" >/dev/null 2>&1 || abort "- Failed to format ext4 image"
+    /system/bin/mke2fs -t ext4 -O ^has_journal -F "$IMG_FILE" >/dev/null 2>&1 || {
+        rm -f "$IMG_FILE"
+        abort "- Failed to format ext4 image"
+    }
 
     ui_print "- Image created successfully (sparse file)"
 fi
 
 # 3. First-Time Module Sync (Existing/Pending Modules)
 if [ "$IS_FIRST_INSTALL" = true ]; then
-    . "$MODPATH/utils.sh"
-
+    MNT_DIR="$MODPATH/mnt_temp"
     ui_print " "
     ui_print "- WARNING: Module sync is an experimental feature."
     ui_print "- It works, but behavior varies across environments."
@@ -73,6 +136,7 @@ if [ "$IS_FIRST_INSTALL" = true ]; then
         mkdir -p /data/adb/metamodule
         export MNT_DIR="$MODPATH/mnt_temp"
         export IMG_FILE="$MODPATH/modules.img"
+        SYNC_FAILED=0
 
         # Silent check prevents spamming the terminal with "skipped" logs
         silent_check_requires_move() {
@@ -117,8 +181,12 @@ if [ "$IS_FIRST_INSTALL" = true ]; then
 
                         ui_print "- Syncing [$dir_label] module: $MODID"
                         check_conflicts
-                        post_install_to_image
-                        SYNC_COUNT=$((SYNC_COUNT + 1))
+                        if post_install_to_image; then
+                            SYNC_COUNT=$((SYNC_COUNT + 1))
+                        else
+                            SYNC_FAILED=$((SYNC_FAILED + 1))
+                            ui_print "! Failed to sync $MODID (it keeps working from its own folder)"
+                        fi
                     fi
                 done
             done
@@ -130,6 +198,7 @@ if [ "$IS_FIRST_INSTALL" = true ]; then
             umount "$MNT_DIR" || umount -l "$MNT_DIR"
             rmdir "$MNT_DIR" 2>/dev/null
 
+            [ "$SYNC_FAILED" -gt 0 ] && ui_print "- $SYNC_FAILED module(s) could not be synced"
             if [ "$SYNC_COUNT" -gt 0 ]; then
                 ui_print "- Successfully synced $SYNC_COUNT module(s)!"
             else

@@ -17,6 +17,13 @@ LOG_FILE="$META_DIR/overlayfsx.log"
 
 log INFO "Starting module mount process"
 
+# Mount the ext4 image (with automatic repair + one retry)
+mount_image() {
+    mkdir -p "$MNT_DIR"
+    chcon u:object_r:ksu_file:s0 "$IMG_FILE" 2>/dev/null
+    mount -t ext4 -o loop,rw,noatime "$IMG_FILE" "$MNT_DIR"
+}
+
 # Ensure ext4 image is mounted
 if ! mountpoint -q "$MNT_DIR" 2>/dev/null; then
     log INFO "Image not mounted, mounting now..."
@@ -26,12 +33,20 @@ if ! mountpoint -q "$MNT_DIR" 2>/dev/null; then
         exit 1
     fi
 
-    mkdir -p "$MNT_DIR"
-    chcon u:object_r:ksu_file:s0 "$IMG_FILE" 2>/dev/null
-    mount -t ext4 -o loop,rw,noatime "$IMG_FILE" "$MNT_DIR" || {
-        log ERROR "Failed to mount image"
-        exit 1
-    }
+    # Resize requested from the WebUI (needs the image unmounted).
+    apply_pending_resize "$IMG_FILE"
+
+    # Cheap when the image was cleanly unmounted; repairs it after a crash/power loss.
+    fsck_image "$IMG_FILE" preen || log WARN "Image check reported problems, attempting mount anyway"
+
+    if ! mount_image; then
+        log WARN "Mount failed, running full repair and retrying once"
+        fsck_image "$IMG_FILE" force
+        mount_image || {
+            log ERROR "Failed to mount image"
+            exit 1
+        }
+    fi
     log INFO "Image mounted successfully at $MNT_DIR"
 else
     log INFO "Image already mounted at $MNT_DIR"
@@ -45,52 +60,107 @@ if [ ! -f "$BINARY" ]; then
     exit 1
 fi
 
-# Apply staged updates from the ext4 image before generating the mount tree
-log INFO "Applying pending module updates in image..."
-for update_dir in "$MNT_DIR"/*_update; do
-    if [ -d "$update_dir" ]; then
-        original_dir="${update_dir%_update}"
-        MODULE_NAME=$(basename "$original_dir")
-        log INFO "Swapping staged update for: $MODULE_NAME"
-
-        # Atomic swap: Delete old live module and rename the update
-        rm -rf "$original_dir"
-        mv "$update_dir" "$original_dir"
+# --- Recover from an interrupted update swap ---------------------------------
+# "<id>.old" is the previous version kept while the swap is in progress.
+for old_dir in "$MNT_DIR"/*.old; do
+    [ -d "$old_dir" ] || continue
+    live_dir="${old_dir%.old}"
+    if [ -d "$live_dir" ]; then
+        log INFO "Discarding leftover backup: $(basename "$old_dir")"
+        rm -rf "$old_dir"
+    else
+        log WARN "Interrupted swap detected, restoring: $(basename "$live_dir")"
+        mv "$old_dir" "$live_dir"
     fi
 done
 
-# Cleanup orphaned/skip_mount modules from image
-log INFO "Checking for orphaned modules and skip_mount flags..."
-REMOVED_COUNT=0
+# Apply staged updates from the ext4 image before generating the mount tree.
+# The old version is renamed (not deleted) first, so a failure at any point can be rolled back.
+log INFO "Applying pending module updates in image..."
+for update_dir in "$MNT_DIR"/*_update; do
+    [ -d "$update_dir" ] || continue
+    original_dir="${update_dir%_update}"
+    MODULE_NAME=$(basename "$original_dir")
+    [ -n "$MODULE_NAME" ] || continue
 
-for module_dir in "$MNT_DIR"/*; do
-    if [ ! -d "$module_dir" ] || [ "$(basename "$module_dir")" = "lost+found" ] || echo "$module_dir" | grep -q "_update$"; then
+    if [ -z "$(ls -A "$update_dir" 2>/dev/null)" ]; then
+        log WARN "Staged update for $MODULE_NAME is empty, discarding it"
+        rm -rf "$update_dir"
         continue
     fi
 
-    MODULE_NAME=$(basename "$module_dir")
-    METADATA_PATH="$MODULE_METADATA_DIR/$MODULE_NAME"
-    SHOULD_REMOVE=false
-    REMOVE_REASON=""
-
-    # Check if module still exists in metadata directory
-    if [ ! -d "$METADATA_PATH" ]; then
-        SHOULD_REMOVE=true
-        REMOVE_REASON="orphaned"
-    # Check if module has skip_mount flag
-    elif [ -f "$METADATA_PATH/skip_mount" ]; then
-        SHOULD_REMOVE=true
-        REMOVE_REASON="skip_mount"
-    fi
-
-    if [ "$SHOULD_REMOVE" = true ]; then
-        log INFO "Removing $REMOVE_REASON module from image: $MODULE_NAME"
-        rm -rf "$module_dir"
-        REMOVED_COUNT=$((REMOVED_COUNT + 1))
+    log INFO "Swapping staged update for: $MODULE_NAME"
+    if [ -d "$original_dir" ]; then
+        rm -rf "$original_dir.old"
+        if ! mv "$original_dir" "$original_dir.old"; then
+            log ERROR "Cannot move old version of $MODULE_NAME aside, keeping it unchanged"
+            continue
+        fi
+        if mv "$update_dir" "$original_dir"; then
+            rm -rf "$original_dir.old"
+        else
+            log ERROR "Swap failed for $MODULE_NAME, rolling back"
+            mv "$original_dir.old" "$original_dir"
+        fi
+    else
+        mv "$update_dir" "$original_dir" || log ERROR "Failed to activate staged module $MODULE_NAME"
     fi
 done
+# Staging leftovers of interrupted installs are never complete: remove them.
+rm -rf "$MNT_DIR"/*_update.tmp 2>/dev/null
 
-if [ $REMOVED_COUNT -gt 0 ]; then
+# Cleanup orphaned/skip_mount modules from image
+log INFO "Checking for orphaned modules and skip_mount flags..."
+
+# Safety net: only trust the metadata directory when it demonstrably lists modules.
+# If it is missing/empty (storage hiccup, wrong mount state) NOTHING may be deleted.
+metadata_is_sane() {
+    [ -d "$MODULE_METADATA_DIR" ] || return 1
+    for prop_file in "$MODULE_METADATA_DIR"/*/module.prop; do
+        [ -f "$prop_file" ] && return 0
+    done
+    return 1
+}
+
+REMOVED_COUNT=0
+if metadata_is_sane; then
+    CANDIDATES=""
+    TOTAL_COUNT=0
+    for module_dir in "$MNT_DIR"/*; do
+        [ -d "$module_dir" ] || continue
+        MODULE_NAME=$(basename "$module_dir")
+        case "$MODULE_NAME" in
+            lost+found|*_update|*_update.tmp|*.old) continue ;;
+        esac
+        TOTAL_COUNT=$((TOTAL_COUNT + 1))
+
+        METADATA_PATH="$MODULE_METADATA_DIR/$MODULE_NAME"
+        if [ ! -d "$METADATA_PATH" ] && [ ! -d "/data/adb/modules_update/$MODULE_NAME" ]; then
+            CANDIDATES="$CANDIDATES$MODULE_NAME:orphaned
+"
+        elif [ -f "$METADATA_PATH/skip_mount" ]; then
+            CANDIDATES="$CANDIDATES$MODULE_NAME:skip_mount
+"
+        fi
+    done
+
+    CANDIDATE_COUNT=$(printf '%s' "$CANDIDATES" | grep -c ':')
+    if [ "$TOTAL_COUNT" -ge 2 ] && [ "$CANDIDATE_COUNT" -eq "$TOTAL_COUNT" ]; then
+        # Removing every module in one go is almost certainly a bad read, not a user action.
+        log WARN "All $TOTAL_COUNT modules in the image look removable - refusing to delete anything"
+    else
+        printf '%s' "$CANDIDATES" | while IFS=: read -r MODULE_NAME REMOVE_REASON; do
+            [ -n "$MODULE_NAME" ] || continue
+            log INFO "Removing $REMOVE_REASON module from image: $MODULE_NAME"
+            rm -rf "$MNT_DIR/$MODULE_NAME"
+        done
+        REMOVED_COUNT=$CANDIDATE_COUNT
+    fi
+else
+    log WARN "Module metadata directory looks empty/unreadable - skipping image cleanup"
+fi
+
+if [ "$REMOVED_COUNT" -gt 0 ]; then
     log INFO "Removed $REMOVED_COUNT module(s) from image"
 else
     log INFO "No modules to remove from image"

@@ -81,6 +81,18 @@ export default class SettingsPage {
                         ${this.app.icon('compress')} Optimize Storage
                     </button>
                 </div>
+                <div class="s-row-static border-none pb-4">
+                    <div class="s-row-body">
+                        <div class="s-row-label">Image Size</div>
+                        <div class="s-row-label-desc">Grow or shrink the modules image (${this.data.imageSize} now). Applied safely on the next reboot. Shrinking only works if your modules fit.${this.data.resizePending ? `<br><strong>Pending: ${this.app.utils.escapeHtml(this.data.resizePending)} MB at next reboot</strong>` : ''}</div>
+                    </div>
+                </div>
+                <div class="s-actions pt-6">
+                    <input type="number" id="resize-mb" class="s-input" min="256" max="65536" step="256" inputmode="numeric" placeholder="Size in MB (e.g. 4096)">
+                    <button class="s-btn primary" id="resize-image" ${this.data.mounted ? '' : 'disabled'}>
+                        ${this.app.icon('sync')} Schedule Resize
+                    </button>
+                </div>
             </div>
             ` : ''}
 
@@ -188,7 +200,8 @@ export default class SettingsPage {
         try {
             const utils = this.app.utils;
             const usage = await utils.getStorageUsage(CONFIG.IMG_FILE, CONFIG.MNT_DIR);
-            const moduleId = await this.getModuleId();
+            let moduleId = await this.getModuleId();
+            if (!utils.isValidId(moduleId)) moduleId = 'overlayfsx';
             const targetPath = `${CONFIG.MODULES_DIR}/${moduleId}/remove`;
             const removePending = await utils.execCommand(`[ -f "${targetPath}" ] && echo "1"`).then(() => true).catch(() => false);
 
@@ -198,6 +211,7 @@ export default class SettingsPage {
                 imageSize: usage.totalFormatted,
                 imageUsage: `${usage.usedFormatted} / ${usage.totalFormatted} (${usage.percent}%)`,
                 imageStatus: { mounted: usage.mounted, exists: usage.exists },
+                resizePending: (await utils.execCommand(`tr -dc '0-9' < "${CONFIG.CONF_DIR}/resize_mb" 2>/dev/null`).catch(() => '')).trim(),
                 moduleId,
                 removePending
             };
@@ -237,6 +251,7 @@ export default class SettingsPage {
         });
 
         document.getElementById('optimize-image')?.addEventListener('click', e => this.optimizeStorage(e.currentTarget));
+        document.getElementById('resize-image')?.addEventListener('click', e => this.scheduleResize(e.currentTarget));
         document.getElementById('uninstall-meta-btn')?.addEventListener('click', () => this.uninstallMetaModule());
 
         document.querySelectorAll('.path-copy').forEach(btn => {
@@ -284,7 +299,7 @@ export default class SettingsPage {
     async optimizeStorage(btn) {
         const ok = await this.app.utils.confirmAction(
             'Optimize Storage',
-            'Compact the modules image to reclaim unused space. This creates a temporary copy and may take a minute.<br><br><strong>Reboot required</strong> for size changes to appear in file managers.',
+            'Reclaim unused space from the modules image. The image is trimmed in place; if that is not supported a verified compacted copy is made instead.<br><br>Do not install or remove modules while this runs.',
             'Optimize'
         );
         if (!ok) return;
@@ -293,24 +308,86 @@ export default class SettingsPage {
         btn.innerHTML = `${this.app.icon('spinner', 'fa-spin')} Optimizing...`;
         btn.disabled = true;
 
+        const q = v => this.app.utils.shQuote(v);
         try {
             this.app.utils.showToast('Starting storage optimization', 'info');
+            // Step 1 (preferred): fstrim on the mounted loop device punches holes directly in
+            // the image file. Nothing is copied or replaced, so nothing can be lost.
+            // Step 2 (fallback): compacted copy, which only replaces the image after it has
+            // been fully verified. Every step is chained: a failure aborts and the original stays.
             const cmd = `
-                dd if=/dev/zero of="${CONFIG.MNT_DIR}/zero.fill" bs=1M 2>/dev/null
-                rm -f "${CONFIG.MNT_DIR}/zero.fill"
-                "${CONFIG.BINARY}" xcp "${CONFIG.IMG_FILE}" "${CONFIG.IMG_FILE}.new" --punch-hole
-                mv "${CONFIG.IMG_FILE}.new" "${CONFIG.IMG_FILE}"
-                chmod 644 "${CONFIG.IMG_FILE}"
-                chcon u:object_r:ksu_file:s0 "${CONFIG.IMG_FILE}"
+                IMG=${q(CONFIG.IMG_FILE)}; MNT=${q(CONFIG.MNT_DIR)}; BIN=${q(CONFIG.BINARY)}
+                mountpoint -q "$MNT" || { echo "Image is not mounted" >&2; exit 1; }
+                sync
+                before=$(du -k "$IMG" 2>/dev/null | awk '{print $1}')
+                if command -v fstrim >/dev/null 2>&1 && fstrim "$MNT" >/dev/null 2>&1; then
+                    after=$(du -k "$IMG" 2>/dev/null | awk '{print $1}')
+                    echo "trim:$before:$after"
+                    exit 0
+                fi
+                NEW="$IMG.new"
+                rm -f "$NEW"
+                fail() { rm -f "$NEW"; echo "$1" >&2; exit 1; }
+                dd if=/dev/zero of="$MNT/zero.fill" bs=1M 2>/dev/null; rm -f "$MNT/zero.fill"; sync
+                "$BIN" xcp "$IMG" "$NEW" --punch-hole || fail "Compaction failed"
+                [ "$(stat -c%s "$IMG")" = "$(stat -c%s "$NEW")" ] || fail "Compacted image has a different size"
+                if command -v e2fsck >/dev/null 2>&1; then
+                    e2fsck -fn "$NEW" >/dev/null 2>&1 || fail "Verification failed (image busy), original left untouched. Try again right after a reboot."
+                fi
+                chmod 644 "$NEW" && chcon u:object_r:ksu_file:s0 "$NEW" 2>/dev/null
+                mv "$NEW" "$IMG" || fail "Could not replace image"
+                after=$(du -k "$IMG" 2>/dev/null | awk '{print $1}')
+                echo "copy:$before:$after"
             `;
-            await this.app.utils.execCommand(cmd);
-            this.app.utils.showToast('Storage optimized! Reboot to apply changes.', 'success');
+            const out = (await this.app.utils.execCommand(cmd)).trim().split('\n').pop();
+            const [mode, before, after] = out.split(':');
+            const freed = Math.max(0, (parseInt(before) || 0) - (parseInt(after) || 0)) * 1024;
+            const msg = `Storage optimized, reclaimed ${this.app.utils.formatBytes(freed)}.`;
+            this.app.utils.showToast(mode === 'copy' ? `${msg} Reboot to apply.` : msg, 'success');
             await this.update();
         } catch (err) {
             this.app.utils.logToFile(`Optimization engine failure: ${err.message}`, 'ERROR');
             this.app.utils.showToast(`Optimization failed: ${err.message}`, 'error');
         } finally {
             btn.innerHTML = orig;
+            btn.disabled = false;
+        }
+    }
+
+    async scheduleResize(btn) {
+        const utils = this.app.utils;
+        const input = document.getElementById('resize-mb');
+        const raw = (input?.value || '').trim();
+        if (!/^\d+$/.test(raw)) { utils.showToast('Enter a size in MB (digits only)', 'warning'); return; }
+
+        const mb = parseInt(raw, 10);
+        if (mb < 256 || mb > 65536) { utils.showToast('Size must be between 256 and 65536 MB', 'warning'); return; }
+
+        const usage = await utils.getStorageUsage(CONFIG.IMG_FILE, CONFIG.MNT_DIR);
+        const usedMb = Math.ceil(usage.used / 1048576);
+        const minMb = Math.ceil(usedMb * 1.15) + 64;
+        if (usage.exists && mb < minMb) {
+            utils.showToast(`Too small: ${usedMb} MB are in use, choose at least ${minMb} MB`, 'warning');
+            return;
+        }
+
+        const ok = await utils.confirmAction(
+            'Resize Image',
+            `Resize the modules image to <strong>${mb} MB</strong>? It is checked and resized during the next boot. Back up important data first.`,
+            'Schedule'
+        );
+        if (!ok) return;
+
+        btn.disabled = true;
+        try {
+            await utils.execCommand(
+                `mkdir -p ${utils.shQuote(CONFIG.CONF_DIR)} && printf '%s\n' ${utils.shQuote(String(mb))} > ${utils.shQuote(CONFIG.CONF_DIR + '/resize_mb')}`
+            );
+            utils.showToast(`Resize to ${mb} MB scheduled. Reboot to apply.`, 'success');
+            await this.update();
+        } catch (err) {
+            utils.showToast(`Failed: ${err.message}`, 'error');
+        } finally {
             btn.disabled = false;
         }
     }

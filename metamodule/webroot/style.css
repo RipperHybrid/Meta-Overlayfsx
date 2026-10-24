@@ -699,3 +699,6 @@ body.modal-open { overflow: hidden; touch-action: none; }
 .clickable-conflict { cursor: pointer; transition: background var(--fast) var(--ease); position: relative; }
 .clickable-conflict:active { background: rgba(255,255,255,0.1); transform: scale(0.98); }
 .conflict-arrow { font-size: 8px; color: var(--text-3); opacity: 0.5; margin-left: auto; }
+/* Resize input (Settings > Storage) */
+.s-input { flex: 2; min-width: 0; padding: 9px 12px; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface-md); color: var(--text); font-family: var(--font-mono); font-size: 12px; outline: none; }
+.s-input:focus { border-color: var(--border-hi, var(--border)); }

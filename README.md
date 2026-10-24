@@ -40,8 +40,8 @@ A comprehensive dashboard integrated directly into KernelSU Manager.
 2. Install via KernelSU Manager **OR** via ADB:
 
 ```bash
-adb push overlayfsx-v1.3.4.zip /sdcard/
-adb shell su -c 'ksud module install /sdcard/overlayfsx-v1.3.4.zip'
+adb push overlayfsx-v1.3.5.zip /sdcard/
+adb shell su -c 'ksud module install /sdcard/overlayfsx-v1.3.5.zip'
 ```
 
 3. Reboot.

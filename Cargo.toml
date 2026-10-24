@@ -1,6 +1,6 @@
 [package]
 name = "overlayfsx"
-version = "1.3.4"
+version = "1.3.5"
 edition = "2024"
 authors = ["KernelSU Developers", "AshBorn"]
 description = "Next-Gen OverlayFS engine with real-time kernel inspection & native WebUI."

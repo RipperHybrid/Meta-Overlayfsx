@@ -174,8 +174,8 @@ export default class DashboardPage {
                         <span class="info-glass-tag">${ksuVersion}</span>
                     </div>
                     <div class="info-rows-grid">
-                        <div class="info-row"><span class="k">Model</span><span class="v">${deviceInfo.model}</span></div>
-                        <div class="info-row"><span class="k">Android</span><span class="v">${deviceInfo.android}</span></div>
+                        <div class="info-row"><span class="k">Model</span><span class="v">${this.app.utils.escapeHtml(deviceInfo.model)}</span></div>
+                        <div class="info-row"><span class="k">Android</span><span class="v">${this.app.utils.escapeHtml(deviceInfo.android)}</span></div>
                         <div class="info-row"><span class="k">Root</span><span class="v ok">Active</span></div>
                     </div>
                 </div>
@@ -245,7 +245,7 @@ export default class DashboardPage {
 
             const cmd = `
                 sizes=$(du -sk "${CONFIG.MODULES_DIR}"/* 2>/dev/null)
-                ls -1 "${CONFIG.MNT_DIR}" 2>/dev/null | grep -v 'lost+found' | grep -v '_update$' | while read -r id; do
+                ls -1 "${CONFIG.MNT_DIR}" 2>/dev/null | grep -v 'lost+found' | grep -v '_update$' | grep -v '_update.tmp$' | grep -v '[.]old$' | while read -r id; do
                     [ -z "$id" ] && continue
                     p="${CONFIG.MODULES_DIR}/$id"
                     name=$(grep "^name=" "$p/module.prop" 2>/dev/null | cut -d'=' -f2-)

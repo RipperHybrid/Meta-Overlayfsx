@@ -190,7 +190,7 @@ class MetaOverlayApp {
                 <div class="empty-state">
                     ${this.icon('exclamation-triangle')}
                     <h3>Error Loading Page</h3>
-                    <p>${error.message}</p>
+                    <p>${this.utils.escapeHtml(error.message)}</p>
                 </div>
             `;
         } finally {

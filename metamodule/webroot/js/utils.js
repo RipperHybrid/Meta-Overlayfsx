@@ -1,6 +1,23 @@
 import { icon } from './icons.js';
 
 export default class Utils {
+    // Escape untrusted text before it is placed into innerHTML / HTML attributes.
+    static escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"'`]/g, ch => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;'
+        }[ch]));
+    }
+
+    // Module ids are used inside shell commands, so only a strict whitelist is accepted.
+    static isValidId(id) {
+        return typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) && !id.includes('..');
+    }
+
+    // Quote an arbitrary string as a single shell word.
+    static shQuote(value) {
+        return `'${String(value).replace(/'/g, `'\\''`)}'`;
+    }
+
     static async execCommand(command) {
         return new Promise((resolve, reject) => {
             if (typeof ksu !== 'undefined' && typeof ksu.exec === 'function') {
@@ -19,6 +36,7 @@ export default class Utils {
 
     static async getModuleProp(moduleId, prop) {
         try {
+            if (!this.isValidId(moduleId) || !/^[A-Za-z0-9_]+$/.test(prop)) return null;
             const result = await this.execCommand(
                 `grep "^${prop}=" "/data/adb/modules/${moduleId}/module.prop" 2>/dev/null | cut -d'=' -f2-`
             );
@@ -87,8 +105,9 @@ export default class Utils {
     static showToast(message, type = 'info', duration = 3000) {
         const logLevel = type === 'warning' ? 'WARN' : 'INFO';
 
-        const cleanMessage = message.replace(/<[^>]+>/g, '');
-        this.logToFile(cleanMessage, logLevel);
+        // Toast messages are plain text: never interpret them as HTML.
+        const safeMessage = this.escapeHtml(message);
+        this.logToFile(String(message), logLevel);
 
         const container = document.getElementById('toast-container');
         if (!container) return;
@@ -103,7 +122,7 @@ export default class Utils {
             info:    'info-circle'
         }[type] || 'info-circle';
 
-        toast.innerHTML = `${icon(iconName)}<span>${message}</span>`;
+        toast.innerHTML = `${icon(iconName)}<span>${safeMessage}</span>`;
         container.appendChild(toast);
 
         setTimeout(() => {
@@ -125,7 +144,7 @@ export default class Utils {
             modal.innerHTML = `
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h3 class="modal-title">${title}</h3>
+                        <h3 class="modal-title">${this.escapeHtml(title)}</h3>
                         <button class="modal-close">✕</button>
                     </div>
                     <div class="modal-body">${content}</div>

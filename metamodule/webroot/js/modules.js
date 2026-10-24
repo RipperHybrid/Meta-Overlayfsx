@@ -41,7 +41,9 @@ export default class ModulesPage {
     }
 
     renderSlab(module, index) {
-        const name = module.name || module.id;
+        const esc = s => this.app.utils.escapeHtml(s);
+        const name = esc(module.name || module.id);
+        const mid = esc(module.id);
         let statusClass = 'active';
         let badgeHtml = '';
         let avatarIcon = 'check-circle';
@@ -58,7 +60,7 @@ export default class ModulesPage {
             badgeHtml = `<span class="slab-badge active"><span class="live-dot"></span> On</span>`;
         }
         const tags = [];
-        if (module.id !== name) tags.push(`<span class="slab-tag">${this.app.icon('code')} ${module.id}</span>`);
+        if (module.id !== (module.name || module.id)) tags.push(`<span class="slab-tag">${this.app.icon('code')} ${mid}</span>`);
         if (module.activeFiles !== undefined) tags.push(`<span class="slab-tag">${this.app.icon('file-alt')} ${module.activeFiles} Files</span>`);
 
         if (module.conflictsLost && module.conflictsLost.length > 0) {
@@ -71,14 +73,14 @@ export default class ModulesPage {
         if (!module.existsInModulesDir) tags.push(`<span class="slab-tag text-red">${this.app.icon('exclamation-triangle')} Not Linked</span>`);
 
         let actionsHtml = module.removePending ?
-            `<button class="slab-btn success restore-module" data-module="${module.id}">${this.app.icon('undo')} Restore</button>` :
+            `<button class="slab-btn success restore-module" data-module="${mid}">${this.app.icon('undo')} Restore</button>` :
             (module.hasUpdate ? `<button class="slab-btn" disabled>${this.app.icon('ban')} Update Pending</button>` :
-            `<button class="slab-btn info-module" data-module="${module.id}">${this.app.icon('info-circle')} Info</button>
-             <button class="slab-btn danger uninstall-module" data-module="${module.id}">${this.app.icon('trash')} Delete</button>
-             <button class="slab-btn ${module.enabled ? 'warning' : 'success'} toggle-module" data-module="${module.id}" data-action="${module.enabled ? 'disable' : 'enable'}">${this.app.icon(module.enabled ? 'pause' : 'play')} ${module.enabled ? 'Disable' : 'Enable'}</button>`);
+            `<button class="slab-btn info-module" data-module="${mid}">${this.app.icon('info-circle')} Info</button>
+             <button class="slab-btn danger uninstall-module" data-module="${mid}">${this.app.icon('trash')} Delete</button>
+             <button class="slab-btn ${module.enabled ? 'warning' : 'success'} toggle-module" data-module="${mid}" data-action="${module.enabled ? 'disable' : 'enable'}">${this.app.icon(module.enabled ? 'pause' : 'play')} ${module.enabled ? 'Disable' : 'Enable'}</button>`);
 
         return `
-            <div class="module-slab ${statusClass}" data-module="${module.id}" style="animation-delay:${(index % 10) * 40}ms">
+            <div class="module-slab ${statusClass}" data-module="${mid}" style="animation-delay:${(index % 10) * 40}ms">
                 <div class="slab-top">
                     <div class="slab-avatar">${this.app.icon(avatarIcon)}</div>
                     <div class="slab-info"><div class="slab-name">${name}</div>${tags.length ? `<div class="slab-meta">${tags.join('')}</div>` : ''}</div>
@@ -95,7 +97,7 @@ export default class ModulesPage {
             const utils = this.app.utils;
             const mounted = await utils.execCommand(`mountpoint -q "${CONFIG.MNT_DIR}" && echo "1"`).then(() => true).catch(() => false);
             if (!mounted) { this.modules = []; return; }
-            const cmd = `sizes=$(du -sk "${CONFIG.MODULES_DIR}"/* 2>/dev/null); ls -1 "${CONFIG.MNT_DIR}" 2>/dev/null | grep -v 'lost+found' | grep -v '_update$' | while read -r id; do [ -z "$id" ] && continue; p="${CONFIG.MODULES_DIR}/$id"; name=$(grep "^name=" "$p/module.prop" 2>/dev/null | cut -d'=' -f2-); exists=$([ -d "$p" ] && echo "1" || echo "0"); upd=$([ -f "$p/update" ] && echo "1" || echo "0"); rmv=$([ -f "$p/remove" ] && echo "1" || echo "0"); dis=$([ -f "$p/disable" ] && echo "1" || echo "0"); size=0; if [ "$exists" = "1" ]; then size=$(echo "$sizes" | grep -w "$p" | awk '{print $1}'); fi; echo "$id|__NAME__|$name|__STAT__|$exists|$upd|$rmv|$dis|$size"; done`;
+            const cmd = `sizes=$(du -sk "${CONFIG.MODULES_DIR}"/* 2>/dev/null); ls -1 "${CONFIG.MNT_DIR}" 2>/dev/null | grep -v 'lost+found' | grep -v '_update$' | grep -v '_update.tmp$' | grep -v '[.]old$' | while read -r id; do [ -z "$id" ] && continue; p="${CONFIG.MODULES_DIR}/$id"; name=$(grep "^name=" "$p/module.prop" 2>/dev/null | cut -d'=' -f2-); exists=$([ -d "$p" ] && echo "1" || echo "0"); upd=$([ -f "$p/update" ] && echo "1" || echo "0"); rmv=$([ -f "$p/remove" ] && echo "1" || echo "0"); dis=$([ -f "$p/disable" ] && echo "1" || echo "0"); size=0; if [ "$exists" = "1" ]; then size=$(echo "$sizes" | grep -w "$p" | awk '{print $1}'); fi; echo "$id|__NAME__|$name|__STAT__|$exists|$upd|$rmv|$dis|$size"; done`;
             const out = await utils.execCommand(cmd);
             if (!out) return [];
             const modules = [];
@@ -104,6 +106,8 @@ export default class ModulesPage {
                 if (!line.includes('|__NAME__|')) continue;
                 const parts = line.split('|__STAT__|');
                 const [id, namePart] = parts[0].split('|__NAME__|');
+                // Directory names come from the image; reject anything that is not a safe module id.
+                if (!utils.isValidId(id)) continue;
                 const [existsStr, updStr, rmvStr, disStr, sizeStr] = parts[1].split('|');
 
                 const exists = existsStr === '1';
@@ -183,7 +187,7 @@ export default class ModulesPage {
             else if (uninstallBtn) {
                 const id = uninstallBtn.dataset.module;
                 const m = this.modules.find(x => x.id === id);
-                if (await this.app.utils.confirmAction('Uninstall', `Remove <strong>${m?.name || id}</strong> on next reboot?`, 'Uninstall')) await this.toggleUninstall(id, true);
+                if (await this.app.utils.confirmAction('Uninstall', `Remove <strong>${this.app.utils.escapeHtml(m?.name || id)}</strong> on next reboot?`, 'Uninstall')) await this.toggleUninstall(id, true);
             } else if (restoreBtn) await this.toggleUninstall(restoreBtn.dataset.module, false);
             else if (infoBtn) await this.showModuleInfo(this.modules.find(x => x.id === infoBtn.dataset.module));
         };
@@ -194,9 +198,10 @@ export default class ModulesPage {
         let content = `<div class="module-info-modal">
             <div class="info-stats-card">
                 <div class="info-stat"><span class="stat-label">Active Files</span><span class="stat-value text-blue">${m.activeFiles !== undefined ? m.activeFiles : '—'}</span></div>
-                <div class="info-stat"><span class="stat-label">Mounted In</span><span class="stat-value mounts-list">${m.partitions?.length ? [...new Set(m.partitions)].map(p => `<span class="mount-tag">${p}</span>`).join('') : '<span class="text-3">None</span>'}</span></div>
+                <div class="info-stat"><span class="stat-label">Mounted In</span><span class="stat-value mounts-list">${m.partitions?.length ? [...new Set(m.partitions)].map(p => `<span class="mount-tag">${this.app.utils.escapeHtml(p)}</span>`).join('') : '<span class="text-3">None</span>'}</span></div>
             </div>`;
 
+        const esc = s => this.app.utils.escapeHtml(s);
         const renderConflictItems = (list, isLost) => {
             const seen = new Set();
             return list.map(c => {
@@ -204,11 +209,11 @@ export default class ModulesPage {
                 const sig = `${fileName}-${isLost ? c.winner : c.ignored.join(',')}`;
                 if (seen.has(sig)) return '';
                 seen.add(sig);
-                return `<div class="conflict-item clickable-conflict" onclick="app.pages.modules.showPathDetails('${c.file}', '${c.winner}', '${(c.ignored || []).join(',')}')">
+                return `<div class="conflict-item clickable-conflict" data-file="${esc(c.file)}" data-winner="${esc(c.winner)}" data-ignored="${esc((c.ignored || []).join(','))}">
                     <div class="conflict-icon">${this.app.icon('file-alt')}</div>
                     <div class="conflict-details">
-                        <div class="conflict-file">${fileName}</div>
-                        <div class="conflict-reason">${isLost ? `Lost to <span>${c.winner}</span>` : `Overrides <span>${c.ignored.join(', ')}</span>`}</div>
+                        <div class="conflict-file">${esc(fileName)}</div>
+                        <div class="conflict-reason">${isLost ? `Lost to <span>${esc(c.winner)}</span>` : `Overrides <span>${esc(c.ignored.join(', '))}</span>`}</div>
                     </div>
                     <div class="conflict-arrow">${this.app.icon('play')}</div>
                 </div>`;
@@ -224,20 +229,33 @@ export default class ModulesPage {
             </div>`;
 
         content += `</div>`;
-        await this.app.utils.showModal(`${m.name || m.id}`, content, [{ text: 'Close', type: 'secondary', result: 'close' }]);
+        // Delegated handler (replaces the old inline onclick, which was injectable via file names).
+        const onModalClick = e => {
+            const item = e.target.closest('.clickable-conflict');
+            if (!item) return;
+            this.showPathDetails(item.dataset.file || '', item.dataset.winner || '', item.dataset.ignored || '');
+        };
+        const modalRoot = document.getElementById('modal-container');
+        modalRoot?.addEventListener('click', onModalClick);
+        try {
+            await this.app.utils.showModal(`${m.name || m.id}`, content, [{ text: 'Close', type: 'secondary', result: 'close' }]);
+        } finally {
+            modalRoot?.removeEventListener('click', onModalClick);
+        }
     }
 
     async showPathDetails(file, winner, ignoredStr) {
-        const ignored = ignoredStr.split(',');
+        const esc = s => this.app.utils.escapeHtml(s);
+        const ignored = ignoredStr.split(',').filter(Boolean);
         const content = `
         <div class="path-details-modal">
             <div class="path-group">
                 <div class="path-header text-green">${this.app.icon('check-circle')} Running (Active)</div>
-                <div class="path-box-full"><strong>Module:</strong> ${winner}<br><strong>Path:</strong> /${file}</div>
+                <div class="path-box-full"><strong>Module:</strong> ${esc(winner)}<br><strong>Path:</strong> /${esc(file)}</div>
             </div>
             <div class="path-group">
                 <div class="path-header text-red">${this.app.icon('ban')} Ignored (Shadowed)</div>
-                ${ignored.map(id => `<div class="path-box-full"><strong>Module:</strong> ${id}<br><strong>Path:</strong> /${file}</div>`).join('')}
+                ${ignored.map(id => `<div class="path-box-full"><strong>Module:</strong> ${esc(id)}<br><strong>Path:</strong> /${esc(file)}</div>`).join('')}
             </div>
         </div>`;
         await this.app.utils.showModal('Path Conflict Details', content, [{ text: 'Done', type: 'primary', result: 'ok' }]);
@@ -250,6 +268,7 @@ export default class ModulesPage {
 
     async toggleModule(moduleId, enable) {
         try {
+            if (!this.app.utils.isValidId(moduleId)) throw new Error('Invalid module id');
             const m = this.modules.find(x => x.id === moduleId);
             const displayName = m?.name || moduleId;
             await this.app.utils.execCommand(enable ? `rm -f "${CONFIG.MODULES_DIR}/${moduleId}/disable"` : `touch "${CONFIG.MODULES_DIR}/${moduleId}/disable"`);
@@ -263,6 +282,7 @@ export default class ModulesPage {
 
     async toggleUninstall(moduleId, remove) {
         try {
+            if (!this.app.utils.isValidId(moduleId)) throw new Error('Invalid module id');
             const m = this.modules.find(x => x.id === moduleId);
             const displayName = m?.name || moduleId;
             await this.app.utils.execCommand(remove ? `touch "${CONFIG.MODULES_DIR}/${moduleId}/remove"` : `rm -f "${CONFIG.MODULES_DIR}/${moduleId}/remove"`);

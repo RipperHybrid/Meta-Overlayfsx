@@ -2,7 +2,8 @@ use anyhow::{bail, Context, Result};
 use hole_punch::*;
 use std::{
     fs::{File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    io::ErrorKind,
+    os::unix::fs::FileExt,
     path::Path,
 };
 
@@ -37,54 +38,98 @@ fn print_usage() {
     eprintln!("Usage: overlayfsx xcp <src> <dst> [--punch-hole]");
 }
 
-// TODO: use libxcp to improve the speed if cross's MSRV is 1.70
+/// Size of the I/O buffer used while copying data segments.
+const COPY_BUF: usize = 1 << 20; // 1 MiB
+/// Granularity used to detect all-zero blocks (matches the usual ext4 block size).
+const BLOCK: usize = 4096;
+
+/// Fill `buf` from `file` at `offset`, retrying on short reads.
+/// Returns the number of bytes read (less than `buf.len()` only at EOF).
+fn read_full_at(file: &File, buf: &mut [u8], mut offset: u64) -> std::io::Result<usize> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match file.read_at(&mut buf[filled..], offset) {
+            Ok(0) => break,
+            Ok(n) => {
+                filled += n;
+                offset += n as u64;
+            }
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(filled)
+}
+
+/// Copy a sparse file. Only data segments of the source are copied. With `punch_hole`,
+/// every all-zero 4 KiB block is additionally left unwritten in the (freshly truncated,
+/// therefore fully sparse) destination, so zeroed free space becomes a real hole again.
 pub fn copy_sparse_file<P: AsRef<Path>, Q: AsRef<Path>>(
     src: P,
     dst: Q,
     punch_hole: bool,
 ) -> Result<()> {
-    let mut src_file = File::open(src.as_ref())
-        .with_context(|| format!("failed to open {}", src.as_ref().display()))?;
-    let mut dst_file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(dst.as_ref())
-        .with_context(|| format!("failed to open {}", dst.as_ref().display()))?;
+    let (src, dst) = (src.as_ref(), dst.as_ref());
 
-    dst_file.set_len(src_file.metadata()?.len())?;
-
-    let segments = src_file.scan_chunks()?;
-    for segment in segments {
-        if let SegmentType::Data = segment.segment_type {
-            let start = segment.start;
-            let end = segment.end + 1;
-
-            src_file.seek(SeekFrom::Start(start))?;
-            dst_file.seek(SeekFrom::Start(start))?;
-
-            let mut buffer = [0; 4096];
-            let mut total_bytes_copied = 0;
-
-            while total_bytes_copied < end - start {
-                let bytes_to_read =
-                    std::cmp::min(buffer.len() as u64, end - start - total_bytes_copied);
-                let bytes_read = src_file.read(&mut buffer[..bytes_to_read as usize])?;
-
-                if bytes_read == 0 {
-                    break;
-                }
-
-                if punch_hole && buffer[..bytes_read].iter().all(|&x| x == 0) {
-                    dst_file.seek(SeekFrom::Current(bytes_read as i64))?;
-                    total_bytes_copied += bytes_read as u64;
-                    continue;
-                }
-                dst_file.write_all(&buffer[..bytes_read])?;
-                total_bytes_copied += bytes_read as u64;
-            }
+    if let (Ok(a), Ok(b)) = (src.canonicalize(), dst.canonicalize()) {
+        if a == b {
+            bail!("source and destination are the same file");
         }
     }
 
+    let mut src_file =
+        File::open(src).with_context(|| format!("failed to open {}", src.display()))?;
+    let dst_file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(dst)
+        .with_context(|| format!("failed to open {}", dst.display()))?;
+
+    let result = copy_segments(&mut src_file, &dst_file, punch_hole);
+    if result.is_err() {
+        // Never leave a half-written image behind: callers `mv` the destination afterwards.
+        drop(dst_file);
+        let _ = std::fs::remove_file(dst);
+    }
+    result
+}
+
+fn copy_segments(src_file: &mut File, dst_file: &File, punch_hole: bool) -> Result<()> {
+    let total_len = src_file.metadata()?.len();
+    dst_file.set_len(total_len)?;
+
+    let segments = src_file.scan_chunks()?;
+    let mut buffer = vec![0u8; COPY_BUF];
+
+    for segment in segments {
+        if !matches!(segment.segment_type, SegmentType::Data) {
+            continue;
+        }
+        let start = segment.start;
+        let end = (segment.end + 1).min(total_len);
+        let mut pos = start;
+
+        while pos < end {
+            let want = std::cmp::min(buffer.len() as u64, end - pos) as usize;
+            let got = read_full_at(src_file, &mut buffer[..want], pos)
+                .with_context(|| format!("read failed at offset {pos}"))?;
+            if got == 0 {
+                break;
+            }
+
+            for (i, block) in buffer[..got].chunks(BLOCK).enumerate() {
+                if punch_hole && block.iter().all(|&b| b == 0) {
+                    continue; // leave a hole
+                }
+                dst_file
+                    .write_all_at(block, pos + (i * BLOCK) as u64)
+                    .with_context(|| format!("write failed at offset {}", pos + (i * BLOCK) as u64))?;
+            }
+            pos += got as u64;
+        }
+    }
+
+    dst_file.sync_all().context("failed to sync destination")?;
     Ok(())
 }
