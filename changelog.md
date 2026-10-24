@@ -21,6 +21,8 @@
 - Releases are created only for `v*` tags (and the tag must match `module.prop`); pushes/PRs just build.
 - `hole-punch` and `cross` are pinned to fixed revisions; `rust-version` set to 1.85; `softprops/action-gh-release` v2.
 - `build.sh` checks Cargo.toml/module.prop versions, uses `--locked` and `npm ci` when lockfiles exist, and fixes the `cargo-ndk` argument order.
+- `build.sh` loads `~/.cargo/env` when `cargo` is not in `PATH`, reports every missing tool with a fix, checks rustc/Node versions, picks `cross` only when Docker/Podman really runs (else `cargo-ndk` with NDK check), installs missing Rust targets, no longer wipes cargo's cache, and can create the flashable zip with `--zip`.
+- `.gitattributes` forces LF for shell scripts (CRLF breaks them on Android).
 - Telegram upload no longer runs `curl -v` (it printed the bot token in the URL).
 - `.gitignore` no longer hides `Cargo.lock`; ignores `node_modules` and the WebUI `dist`.
 

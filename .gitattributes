@@ -1,0 +1,15 @@
+# Android shell scripts must keep LF line endings, whatever the OS / autocrlf setting.
+*.sh        text eol=lf
+*.rs        text eol=lf
+*.js        text eol=lf
+*.json      text eol=lf
+*.md        text eol=lf
+*.yml       text eol=lf
+build.sh    text eol=lf
+metamodule/module.prop text eol=lf
+
+# Binary assets
+*.woff      binary
+*.woff2     binary
+*.png       binary
+metamodule/banner binary

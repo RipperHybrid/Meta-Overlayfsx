@@ -84,7 +84,14 @@ Or use the one-tap **Optimize Storage** button in the WebUI Settings page.
 ```bash
 # Build locally (Artifacts will be in target/module/)
 ./build.sh
+
+# ...and also create the flashable zip (target/overlayfsx_v<version>_<code>.zip)
+./build.sh --zip
 ```
+
+Ubuntu/Debian quick setup: `sudo apt install build-essential git curl zip unzip`, install Rust with
+[rustup](https://rustup.rs) (not `apt`), Node.js 20, and either Docker (`cross`) or the Android NDK (`cargo-ndk`,
+`export ANDROID_NDK_HOME=...`). `build.sh` tells you what is missing.
 
 Commit `Cargo.lock` and `metamodule/webroot/package-lock.json` so builds are reproducible
 (`build.sh` uses `--locked` / `npm ci` automatically when they exist).
