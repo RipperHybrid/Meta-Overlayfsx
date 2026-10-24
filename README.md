@@ -79,12 +79,26 @@ Or use the one-tap **Optimize Storage** button in the WebUI Settings page.
 
 ## 🏗️ Building
 
-**Requirements:** `cargo`, `cargo-ndk`, `cross` (optional).
+**Requirements:** `cargo` (Rust ≥ 1.85), `cargo-ndk` **or** `cross`, Node.js ≥ 18.
 
 ```bash
 # Build locally (Artifacts will be in target/module/)
 ./build.sh
 ```
+
+Commit `Cargo.lock` and `metamodule/webroot/package-lock.json` so builds are reproducible
+(`build.sh` uses `--locked` / `npm ci` automatically when they exist).
+
+### Releasing
+
+CI builds every push and pull request, but only **tags** create a release:
+
+```bash
+# 1. bump version in Cargo.toml and metamodule/module.prop (versionCode too)
+git tag v1.3.5 && git push origin v1.3.5
+```
+
+The tag must equal `v<version>` from `module.prop`, otherwise the workflow fails.
 
 ## 👥 Credits & Acknowledgements
 

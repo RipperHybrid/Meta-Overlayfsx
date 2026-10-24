@@ -1,15 +1,47 @@
 name: Build and Release
 
+# - Pushes to main, pull requests and manual runs only BUILD (zip is kept as a workflow artifact).
+# - A GitHub release is created ONLY when a tag "vX.Y.Z" is pushed, and the tag must match
+#   the version in metamodule/module.prop.
 on:
   workflow_dispatch:
+  pull_request:
   push:
+    branches: [main]
+    tags: ['v*']
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned cross revision (was: unpinned main). Bump deliberately.
+  CROSS_REV: 526d03ddcd2f70e683074b3ea6f75ed300f33132
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Informational for now: the existing code base is not rustfmt-clean yet.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        run: |
+          rustup toolchain install stable --profile minimal -c rustfmt -c clippy
+          rustup default stable
+          rustup target add aarch64-linux-android
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --target aarch64-linux-android --release -- -D warnings
+
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
@@ -23,7 +55,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: main
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -44,7 +75,7 @@ jobs:
 
       - name: Install cross
         run: |
-          cargo install cross --git https://github.com/cross-rs/cross
+          cargo install cross --git https://github.com/cross-rs/cross --rev "$CROSS_REV" --locked
 
       - name: Build overlayfsx metamodule
         run: |
@@ -56,9 +87,10 @@ jobs:
         run: |
           export TZ='Asia/Kolkata'
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
-          PROP_FILE=$(find . -type f -name "module.prop" ! -path "*/target/*" | head -n 1)
+          PROP_FILE="metamodule/module.prop"
 
-          if [ -z "$PROP_FILE" ]; then
+          if [ ! -f "$PROP_FILE" ]; then
+            echo "module.prop not found" >&2
             exit 1
           fi
 
@@ -66,12 +98,21 @@ jobs:
           VER_CODE=$(grep -m1 '^versionCode=' "$PROP_FILE" | cut -d'=' -f2- | tr -d '\r')
 
           TAG_NAME="v${VERSION}"
+
+          # A release tag must match the module version, otherwise the wrong zip gets published.
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "$TAG_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match module.prop version $TAG_NAME" >&2
+            exit 1
+          fi
+
           ZIP_NAME="${REPO_NAME}_${TAG_NAME}_${VER_CODE}.zip"
           BUILD_TIME=$(date +"%d-%m-%Y %I:%M %p")
 
-          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_OUTPUT"
-          echo "TAG_NAME=$TAG_NAME" >> "$GITHUB_OUTPUT"
-          echo "REPO_NAME=$REPO_NAME" >> "$GITHUB_OUTPUT"
+          {
+            echo "ZIP_NAME=$ZIP_NAME"
+            echo "TAG_NAME=$TAG_NAME"
+            echo "REPO_NAME=$REPO_NAME"
+          } >> "$GITHUB_OUTPUT"
 
           cd target/module
           zip -r "../../$ZIP_NAME" .
@@ -102,8 +143,13 @@ jobs:
           path: release_body.md
 
   release:
+    # Only for version tags - never for ordinary pushes, PRs or manual runs.
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
       - name: Download Zip Artifact
         uses: actions/download-artifact@v4
@@ -115,54 +161,8 @@ jobs:
         with:
           name: release-body
 
-      - name: Send to Telegram
-        if: always()
-        continue-on-error: true
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.MAIN_BUILDS }}
-          ZIP_NAME: ${{ needs.build.outputs.zip_name }}
-          REPO_SLUG: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-          COMMIT_HASH: ${{ github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          SERVER_URL: ${{ github.server_url }}
-        run: |
-          if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
-            exit 0
-          fi
-
-          if [ ! -f "$ZIP_NAME" ]; then
-            exit 1
-          fi
-
-          if [ "$EVENT_NAME" == "workflow_dispatch" ]; then
-            BTN_TEXT="Manual Run ⚡️"
-            BTN_URL="${SERVER_URL}/${REPO_SLUG}/actions/runs/${RUN_ID}"
-          else
-            BTN_TEXT="View Commit 📝"
-            BTN_URL="${SERVER_URL}/${REPO_SLUG}/commit/${COMMIT_HASH}"
-          fi
-
-          REPO_URL="${SERVER_URL}/${REPO_SLUG}"
-          KEYBOARD_JSON="{\"inline_keyboard\":[[{\"text\":\"$BTN_TEXT\",\"url\":\"$BTN_URL\"},{\"text\":\"Repo 🏠\",\"url\":\"$REPO_URL\"}]]}"
-
-          CAPTION=$(cat release_body.md | sed -e 's/^[ \t]*\* /• /g' -e 's/[*_`#]//g')
-
-          if [ ${#CAPTION} -ge 1024 ]; then
-            CAPTION="${CAPTION:0:900}
-
-          (Changelog truncated. Click to see full changes)"
-          fi
-
-          curl -v -F "chat_id=$CHAT_ID" \
-               -F "document=@$ZIP_NAME" \
-               -F "caption=$CAPTION" \
-               -F "reply_markup=$KEYBOARD_JSON" \
-               "https://api.telegram.org/bot$BOT_TOKEN/sendDocument"
-
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.build.outputs.tag_name }}
           name: ${{ needs.build.outputs.repo_name }} Version ${{ needs.build.outputs.tag_name }}
@@ -170,3 +170,43 @@ jobs:
           files: ${{ needs.build.outputs.zip_name }}
           draft: false
           prerelease: false
+
+      - name: Send to Telegram
+        continue-on-error: true
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.MAIN_BUILDS }}
+          ZIP_NAME: ${{ needs.build.outputs.zip_name }}
+          REPO_SLUG: ${{ github.repository }}
+          TAG_NAME: ${{ needs.build.outputs.tag_name }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
+            echo "Telegram secrets not set, skipping"
+            exit 0
+          fi
+
+          if [ ! -f "$ZIP_NAME" ]; then
+            echo "Zip not found: $ZIP_NAME" >&2
+            exit 1
+          fi
+
+          REPO_URL="${SERVER_URL}/${REPO_SLUG}"
+          RELEASE_URL="${REPO_URL}/releases/tag/${TAG_NAME}"
+          KEYBOARD_JSON="{\"inline_keyboard\":[[{\"text\":\"Release 📝\",\"url\":\"$RELEASE_URL\"},{\"text\":\"Repo 🏠\",\"url\":\"$REPO_URL\"}]]}"
+
+          CAPTION=$(sed -e 's/^[ \t]*\* /• /g' -e 's/[*_`#]//g' release_body.md)
+
+          if [ ${#CAPTION} -ge 1024 ]; then
+            CAPTION="${CAPTION:0:900}
+
+          (Changelog truncated. Click to see full changes)"
+          fi
+
+          # No -v: verbose mode prints the request URL, which contains the bot token.
+          curl -sS --fail-with-body \
+               -F "chat_id=$CHAT_ID" \
+               -F "document=@$ZIP_NAME" \
+               -F "caption=$CAPTION" \
+               -F "reply_markup=$KEYBOARD_JSON" \
+               "https://api.telegram.org/bot$BOT_TOKEN/sendDocument" > /dev/null

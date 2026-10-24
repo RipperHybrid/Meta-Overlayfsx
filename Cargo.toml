@@ -2,6 +2,7 @@
 name = "overlayfsx"
 version = "1.3.5"
 edition = "2024"
+rust-version = "1.85"
 authors = ["KernelSU Developers", "AshBorn"]
 description = "Next-Gen OverlayFS engine with real-time kernel inspection & native WebUI."
 license = "GPL-3.0"
@@ -10,7 +11,7 @@ license = "GPL-3.0"
 anyhow = "1"
 log = "0.4"
 env_logger = { version = "0.11", default-features = false }
-hole-punch = { git = "https://github.com/tiann/hole-punch" }
+hole-punch = { git = "https://github.com/tiann/hole-punch", rev = "11ab7a61bfb98682b72fd7f58a47d8e5d997328e" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 rustix = { git = "https://github.com/Kernel-SU/rustix.git", rev = "4a53fbc7cb7a07cabe87125cc21dbc27db316259", features = ["all-apis"] }

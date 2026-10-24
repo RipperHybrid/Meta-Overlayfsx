@@ -16,6 +16,20 @@ if [ -z "$MODULE_VERSION" ] || [ -z "$MODULE_VERSION_CODE" ]; then
     exit 1
 fi
 
+# Cargo.toml and module.prop must describe the same release.
+if [ "$VERSION" != "$MODULE_VERSION" ]; then
+    echo "Error: version mismatch: Cargo.toml=$VERSION, module.prop=$MODULE_VERSION"
+    exit 1
+fi
+
+# Reproducible builds: honour Cargo.lock when it is committed.
+LOCKED=""
+if [ -f Cargo.lock ]; then
+    LOCKED="--locked"
+else
+    echo "Warning: Cargo.lock not found - dependency versions are not pinned. Run 'cargo generate-lockfile' and commit it."
+fi
+
 echo "=========================================="
 echo "Building overlayfsx v${VERSION}"
 echo "=========================================="
@@ -50,7 +64,12 @@ if [ -d "$WEBROOT_DIR" ]; then
     fi
 
     echo "Installing web dependencies..."
-    npm install
+    if [ -f package-lock.json ]; then
+        npm ci
+    else
+        echo "Warning: package-lock.json not found - using 'npm install'. Commit the generated lockfile."
+        npm install
+    fi
 
     echo "Bundling web assets..."
     npm run build
@@ -64,17 +83,17 @@ fi
 echo ""
 echo "Building for aarch64-linux-android..."
 if [ "$BUILD_TOOL" = "cross" ]; then
-    cross build --release --target aarch64-linux-android
+    cross build --release --target aarch64-linux-android $LOCKED
 else
-    cargo ndk build -t arm64-v8a --release
+    cargo ndk -t arm64-v8a build --release $LOCKED
 fi
 
 echo ""
 echo "Building for x86_64-linux-android..."
 if [ "$BUILD_TOOL" = "cross" ]; then
-    cross build --release --target x86_64-linux-android
+    cross build --release --target x86_64-linux-android $LOCKED
 else
-    cargo ndk build -t x86_64 --release
+    cargo ndk -t x86_64 build --release $LOCKED
 fi
 
 echo ""

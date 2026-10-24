@@ -17,6 +17,13 @@
 - `utils.sh`: `get_prop` keeps values containing `=`; `check_conflicts` is much faster (sorted lists + `comm`) and ignores `_update`/`.old`/`.tmp` folders; `chooseport` no longer leaves stray `getevent` readers and defaults to **No** when no key is pressed.
 - WebUI falls back to the real module id `meta-overlayfsx`.
 
+### 🏭 Build & CI
+- Releases are created only for `v*` tags (and the tag must match `module.prop`); pushes/PRs just build.
+- `hole-punch` and `cross` are pinned to fixed revisions; `rust-version` set to 1.85; `softprops/action-gh-release` v2.
+- `build.sh` checks Cargo.toml/module.prop versions, uses `--locked` and `npm ci` when lockfiles exist, and fixes the `cargo-ndk` argument order.
+- Telegram upload no longer runs `curl -v` (it printed the bot token in the URL).
+- `.gitignore` no longer hides `Cargo.lock`; ignores `node_modules` and the WebUI `dist`.
+
 ### ⚡ Features
 - **Resizable image:** new *Image Size* control in Settings (grow or shrink, applied safely on the next boot). New images can use a custom size via `/data/adb/overlayfsx.d/img_size_mb`.
 - **Optimize Storage:** uses `fstrim` first; the fallback compaction copy is verified and never replaces the image if any step fails.

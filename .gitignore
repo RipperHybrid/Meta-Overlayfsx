@@ -1,4 +1,5 @@
 /target
 /out
-Cargo.lock
 *.log
+node_modules/
+metamodule/webroot/dist/
