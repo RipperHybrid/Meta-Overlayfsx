@@ -10,6 +10,13 @@
 - **Image updates:** the existing image is copied only after a free-space check, the copy is size-checked and verified/repaired with `e2fsck`; the update aborts (leaving the current install untouched) if the copy cannot be verified.
 - **Boot:** `e2fsck -p` runs before mounting the image, with a full repair + one retry if mounting fails.
 
+### 🐞 Fixes
+- `post-mount.sh`: nuke the sysfs entry of the real image mount (path was wrong).
+- `uninstall.sh`: gives modules back overlay content that only existed in the image (existing files are kept) before disabling them.
+- Boot: the hidden `.rw` directory was counted as an enabled module; a failed child overlay is now reverted with a lazy unmount; partial mount failures are reported accurately.
+- `utils.sh`: `get_prop` keeps values containing `=`; `check_conflicts` is much faster (sorted lists + `comm`) and ignores `_update`/`.old`/`.tmp` folders; `chooseport` no longer leaves stray `getevent` readers and defaults to **No** when no key is pressed.
+- WebUI falls back to the real module id `meta-overlayfsx`.
+
 ### ⚡ Features
 - **Resizable image:** new *Image Size* control in Settings (grow or shrink, applied safely on the next boot). New images can use a custom size via `/data/adb/overlayfsx.d/img_size_mb`.
 - **Optimize Storage:** uses `fstrim` first; the fallback compaction copy is verified and never replaces the image if any step fails.

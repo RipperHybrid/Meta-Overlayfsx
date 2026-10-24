@@ -178,15 +178,18 @@ pub fn mount_overlay(
         }
         if let Err(e) = mount_overlay_child(mount_point, &relative, module_roots, &stock_root) {
             warn!("Failed to mount overlay for child {mount_point}: {e:#}, reverting");
-            umount_dir(root).with_context(|| format!("failed to revert {root}"))?;
+            // Child overlays are already mounted on top of the new root, so a plain umount
+            // would fail with EBUSY and leave a half-mounted tree. A lazy (detach) unmount
+            // removes the whole subtree and uncovers the stock mounts again.
+            umount_dir_lazy(root).with_context(|| format!("failed to revert {root}"))?;
             bail!(e);
         }
     }
     Ok(())
 }
 
-pub fn umount_dir(src: impl AsRef<Path>) -> Result<()> {
-    unmount(src.as_ref(), UnmountFlags::empty())
+pub fn umount_dir_lazy(src: impl AsRef<Path>) -> Result<()> {
+    unmount(src.as_ref(), UnmountFlags::DETACH)
         .with_context(|| format!("Failed to umount {}", src.as_ref().display()))?;
     Ok(())
 }
@@ -244,7 +247,13 @@ pub fn collect_enabled_modules(metadata_dir: &str) -> Result<Vec<String>> {
             continue;
         }
 
-        if !path.join("module.prop").exists() && !path.eq(Path::new(SYSTEM_RW_DIR)) {
+        // Hidden directories (e.g. ".rw", the overlay upper/work dirs) are not modules.
+        if module_id.starts_with('.') || path == Path::new(SYSTEM_RW_DIR) {
+            debug!("Skipping non-module directory {}", module_id);
+            continue;
+        }
+
+        if !path.join("module.prop").exists() {
             debug!("Module {} has no module.prop, skipping", module_id);
             continue;
         }
@@ -316,16 +325,25 @@ pub fn mount_modules_systemlessly(metadata_dir: &str, content_dir: &str) -> Resu
 
     info!("Mounting partitions...");
 
+    let mut failed: Vec<String> = Vec::new();
+
     if let Err(e) = mount_partition("system", &system_lowerdir) {
         warn!("mount system failed: {e:#}");
+        failed.push("system".to_string());
     }
 
     for (k, v) in partition_lowerdir {
         if let Err(e) = mount_partition(&k, &v) {
             warn!("mount {k} failed: {e:#}");
+            failed.push(k);
         }
     }
 
-    info!("All partitions processed successfully");
+    if failed.is_empty() {
+        info!("All partitions processed successfully");
+    } else {
+        // Keep returning Ok: a partial mount must never abort the boot script.
+        warn!("Partitions that failed to mount: {}", failed.join(", "));
+    }
     Ok(())
 }

@@ -130,7 +130,7 @@ apply_pending_resize() {
     return 0
 }
 
-# Extract property value from file
+# Extract property value from file (everything after the first "=", so values may contain "=")
 get_prop() {
     prop="$1"
     target_file="$2"
@@ -140,7 +140,12 @@ get_prop() {
         return
     fi
 
-    grep "^$prop=" "$target_file" | cut -d'=' -f2 || echo "unknown"
+    value=$(grep -m1 "^$prop=" "$target_file" | cut -d'=' -f2- | tr -d '\r')
+    if [ -n "$value" ]; then
+        echo "$value"
+    else
+        echo "unknown"
+    fi
 }
 
 # Safely modify module properties without breaking line structures
@@ -234,36 +239,45 @@ copy_selinux_contexts() {
     done
 }
 
-# Check for file conflicts with other installed modules
+# List all regular files of a module tree as paths relative to its root, sorted.
+list_overlay_files() {
+    ( cd "$1" 2>/dev/null && find system vendor product system_ext odm oem -type f 2>/dev/null | sort )
+}
+
+# Check for file conflicts with other installed modules.
+# Uses one sorted file list per module and `comm`, instead of spawning processes per file.
 check_conflicts() {
     log "Scanning for potential file conflicts..."
-    local temp_conflicts="/data/local/tmp/overlayfsx_conflicts_$$.tmp"
-    rm -f "$temp_conflicts"
+    local work_dir="/data/local/tmp/overlayfsx_conflicts_$$"
+    local own_list="$work_dir/own.lst" other_list="$work_dir/other.lst"
+    local temp_conflicts="$work_dir/conflicts.tmp"
+    local OTHER_MOD_DIR OTHER_MOD REL_PATH
 
-    find "$MODPATH" -type f 2>/dev/null | while IFS= read -r FILE; do
-        REL_PATH="${FILE#"$MODPATH/"}"
+    rm -rf "$work_dir"
+    mkdir -p "$work_dir" || { log WARN "Cannot create temp dir, conflict scan skipped"; return 0; }
 
-        case "$REL_PATH" in
-            system/*|vendor/*|product/*|system_ext/*|odm/*|oem/*)
-                for OTHER_MOD_DIR in "$MNT_DIR"/*/; do
-                    [ ! -d "$OTHER_MOD_DIR" ] && continue
+    list_overlay_files "$MODPATH" > "$own_list"
 
-                    OTHER_MOD="$(basename "$OTHER_MOD_DIR")"
+    if [ -s "$own_list" ]; then
+        for OTHER_MOD_DIR in "$MNT_DIR"/*/; do
+            [ -d "$OTHER_MOD_DIR" ] || continue
+            OTHER_MOD="${OTHER_MOD_DIR%/}"
+            OTHER_MOD="${OTHER_MOD##*/}"
 
-                    [ "$OTHER_MOD" = "$MODID" ] && continue
-                    [ "$OTHER_MOD" = "lost+found" ] && continue
-                    [ "$OTHER_MOD" = "${MODID}_update" ] && continue
+            case "$OTHER_MOD" in
+                "$MODID"|lost+found|*_update|*_update.tmp|*.old) continue ;;
+            esac
 
-                    if [ -f "$OTHER_MOD_DIR/$REL_PATH" ]; then
-                        FILENAME="$(basename "$REL_PATH")"
-                        echo "$OTHER_MOD|$FILENAME" >> "$temp_conflicts"
-                    fi
-                done
-                ;;
-        esac
-    done
+            list_overlay_files "$OTHER_MOD_DIR" > "$other_list"
+            [ -s "$other_list" ] || continue
 
-    if [ -f "$temp_conflicts" ]; then
+            comm -12 "$own_list" "$other_list" | while IFS= read -r REL_PATH; do
+                echo "$OTHER_MOD|${REL_PATH##*/}"
+            done >> "$temp_conflicts"
+        done
+    fi
+
+    if [ -s "$temp_conflicts" ]; then
         log "File conflicts detected at the exact same mount path!"
 
         awk -F'|' '{
@@ -296,10 +310,11 @@ check_conflicts() {
         done
 
         log "Note: Both exist in their module folders, but the last one mounted will shadow (overwrite) the other."
-        rm -f "$temp_conflicts"
     else
         log "No file conflicts found."
     fi
+
+    rm -rf "$work_dir"
 }
 
 # Post-installation: stage module payload securely
@@ -372,31 +387,44 @@ mark_replace() {
     setfattr -n trusted.overlay.opaque -v y "$replace_target" 2>/dev/null || true
 }
 
+# Ask a Vol+/Vol- question. Returns 0 for Volume UP, 1 for Volume DOWN.
+# If no key is pressed it returns 1 (No): risky options must never be enabled by a timeout.
+# Original idea by chainfire and ianmacd @xda-developers
 chooseport() {
-  # Original idea by chainfire and ianmacd @xda-developers
-  [ "$1" ] && local delay=$1 || local delay=10
-  local retry_count=0
-  local max_retries=2
-  if [ -z "$TMPDIR" ]; then TMPDIR="/data/local/tmp"; fi
-  mkdir -p "$TMPDIR"
-  while true; do
-    local count=0
-    while true; do
-      timeout $delay /system/bin/getevent -lqc 1 2>&1 > $TMPDIR/events &
-      sleep 0.5; count=$((count + 1))
-      if (`grep -q 'KEY_VOLUMEUP *DOWN' $TMPDIR/events`); then
-        return 0
-      elif (`grep -q 'KEY_VOLUMEDOWN *DOWN' $TMPDIR/events`); then
-        return 1
-      fi
-      [ $count -gt 12 ] && break
+    local delay="${1:-10}" attempt=0 max_retries=2 ev pid
+    [ -z "$TMPDIR" ] && TMPDIR="/data/local/tmp"
+    mkdir -p "$TMPDIR"
+    ev="$TMPDIR/overlayfsx_events.$$"
+
+    while [ "$attempt" -le "$max_retries" ]; do
+        rm -f "$ev"
+        # One reader per attempt; it is always stopped below, so no stray getevent processes remain.
+        timeout "$delay" /system/bin/getevent -lq > "$ev" 2>/dev/null &
+        pid=$!
+
+        while kill -0 "$pid" 2>/dev/null; do
+            if grep -q 'KEY_VOLUMEUP *DOWN' "$ev" 2>/dev/null; then
+                kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; rm -f "$ev"
+                return 0
+            elif grep -q 'KEY_VOLUMEDOWN *DOWN' "$ev" 2>/dev/null; then
+                kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; rm -f "$ev"
+                return 1
+            fi
+            sleep 0.3
+        done
+        wait "$pid" 2>/dev/null
+
+        # Last look at what arrived right before the reader timed out.
+        if grep -q 'KEY_VOLUMEUP *DOWN' "$ev" 2>/dev/null; then rm -f "$ev"; return 0; fi
+        if grep -q 'KEY_VOLUMEDOWN *DOWN' "$ev" 2>/dev/null; then rm -f "$ev"; return 1; fi
+
+        attempt=$((attempt + 1))
+        if [ "$attempt" -le "$max_retries" ]; then
+            echo "  > Volume key not detected. Attempt $attempt of $max_retries. Try again"
+        fi
     done
-    retry_count=$((retry_count + 1))
-    if [ $retry_count -gt $max_retries ]; then
-      echo "  > Volume key not detected after $max_retries attempts. Auto-selecting Current Option."
-      return 0
-    else
-      echo "  > Volume key not detected. Attempt $retry_count of $max_retries. Try again"
-    fi
-  done
+
+    rm -f "$ev"
+    echo "  > Volume key not detected. Auto-selecting: No"
+    return 1
 }

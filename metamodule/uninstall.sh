@@ -20,8 +20,19 @@ if [ -f "$MODDIR/modules.img" ]; then
                 MODULE_DISABLE_FLAG="/data/adb/modules/$MODULE_NAME/disable"
                 MODULE_REAL_DIR="/data/adb/modules/$MODULE_NAME"
 
-                # Only disable if the module actually exists in /data/adb/modules/
+                # Only act if the module actually exists in /data/adb/modules/
                 if [ -d "$MODULE_REAL_DIR" ]; then
+                    # Give the module back any overlay content that exists only in the image,
+                    # so it still works if the user re-enables it without this metamodule.
+                    # Existing files are never overwritten.
+                    for part in system vendor product system_ext odm oem; do
+                        if [ -d "$module_dir/$part" ] && [ ! -e "$MODULE_REAL_DIR/$part" ]; then
+                            cp -a "$module_dir/$part" "$MODULE_REAL_DIR/$part" 2>/dev/null \
+                                || rm -rf "$MODULE_REAL_DIR/$part"
+                        fi
+                    done
+
+                    # Modules are disabled (not removed) to avoid surprises after the switch.
                     touch "$MODULE_DISABLE_FLAG" 2>/dev/null
                 fi
             fi

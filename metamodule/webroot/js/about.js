@@ -20,8 +20,8 @@ export default class AboutPage {
 
     async render() {
         this.moduleInfo = this.getModuleInfo();
-        let moduleId = this.moduleInfo.id && this.moduleInfo.id !== '—' ? this.moduleInfo.id : 'overlayfsx';
-        if (!this.app.utils.isValidId(moduleId)) moduleId = 'overlayfsx';
+        let moduleId = this.moduleInfo.id && this.moduleInfo.id !== '—' ? this.moduleInfo.id : 'meta-overlayfsx';
+        if (!this.app.utils.isValidId(moduleId)) moduleId = 'meta-overlayfsx';
 
         try {
             const rawB64 = await this.app.utils.execCommand(`base64 "${CONFIG.MODULES_DIR}/${moduleId}/banner" 2>/dev/null`);

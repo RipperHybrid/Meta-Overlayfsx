@@ -7,7 +7,7 @@ export default class SettingsPage {
             imageSize: '—',
             imageUsage: '—',
             imageStatus: { mounted: false, exists: false },
-            moduleId: 'overlayfsx',
+            moduleId: 'meta-overlayfsx',
             removePending: false
         };
     }
@@ -183,7 +183,7 @@ export default class SettingsPage {
     }
 
     async getModuleId() {
-        let moduleId = 'overlayfsx';
+        let moduleId = 'meta-overlayfsx';
         try {
             if (typeof ksu !== 'undefined' && typeof ksu.moduleInfo === 'function') {
                 const info = ksu.moduleInfo();
@@ -201,7 +201,7 @@ export default class SettingsPage {
             const utils = this.app.utils;
             const usage = await utils.getStorageUsage(CONFIG.IMG_FILE, CONFIG.MNT_DIR);
             let moduleId = await this.getModuleId();
-            if (!utils.isValidId(moduleId)) moduleId = 'overlayfsx';
+            if (!utils.isValidId(moduleId)) moduleId = 'meta-overlayfsx';
             const targetPath = `${CONFIG.MODULES_DIR}/${moduleId}/remove`;
             const removePending = await utils.execCommand(`[ -f "${targetPath}" ] && echo "1"`).then(() => true).catch(() => false);
 
@@ -220,7 +220,7 @@ export default class SettingsPage {
                 exists: false, mounted: false,
                 imageSize: 'Error', imageUsage: 'Error',
                 imageStatus: { mounted: false, exists: false },
-                moduleId: 'overlayfsx',
+                moduleId: 'meta-overlayfsx',
                 removePending: false
             };
         }
