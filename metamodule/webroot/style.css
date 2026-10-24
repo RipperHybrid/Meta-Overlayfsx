@@ -1,4 +1,26 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Outfit:wght@400;500;600;700;800&display=swap');
+/* Fonts are bundled locally (Latin subset, SIL OFL - see fonts/OFL-*.txt), so the WebUI
+   looks the same without internet access. */
+@font-face {
+    font-family: 'Outfit';
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url('./fonts/Outfit-Variable.woff') format('woff');
+}
+@font-face {
+    font-family: 'DM Mono';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('./fonts/DMMono-Regular.woff') format('woff');
+}
+@font-face {
+    font-family: 'DM Mono';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url('./fonts/DMMono-Medium.woff') format('woff');
+}
 
 :root {
     --bg0: #06090f;

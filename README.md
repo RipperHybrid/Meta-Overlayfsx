@@ -121,6 +121,7 @@ This project uses components from:
 
 * `hole-punch` (Rust crate)
 * `rustix` & `procfs`
+* [Outfit](https://github.com/Outfitio/Outfit-Fonts) and [DM Mono](https://github.com/googlefonts/dm-mono) fonts (SIL Open Font License 1.1, see `metamodule/webroot/fonts/OFL-*.txt`)
 
 ## 📄 License
 

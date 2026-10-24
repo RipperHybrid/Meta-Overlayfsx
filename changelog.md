@@ -24,6 +24,9 @@
 - Telegram upload no longer runs `curl -v` (it printed the bot token in the URL).
 - `.gitignore` no longer hides `Cargo.lock`; ignores `node_modules` and the WebUI `dist`.
 
+### 🔤 WebUI
+- Fonts are now bundled locally (Outfit variable + DM Mono 400/500, Latin subset, ~80 KB, SIL OFL), so the WebUI renders identically offline. The Google Fonts request was removed.
+
 ### ⚡ Features
 - **Resizable image:** new *Image Size* control in Settings (grow or shrink, applied safely on the next boot). New images can use a custom size via `/data/adb/overlayfsx.d/img_size_mb`.
 - **Optimize Storage:** uses `fstrim` first; the fallback compaction copy is verified and never replaces the image if any step fails.
