@@ -39,6 +39,21 @@ jobs:
       - name: clippy
         run: cargo clippy --target aarch64-linux-android --release -- -D warnings
 
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Informational until the first green run; then remove "continue-on-error" to make it a gate.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        run: |
+          rustup update stable
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Unit tests (host)
+        run: cargo test
+
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45

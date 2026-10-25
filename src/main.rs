@@ -1,10 +1,13 @@
 use anyhow::Result;
 use log::info;
 
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
 mod defs;
+mod inspect;
+// Mounting needs Android-only syscalls (rustix fork). Gating it lets `cargo test` run on a normal host.
+#[cfg(target_os = "android")]
 mod mount;
 mod xcp;
-mod inspect;
 
 fn print_help() {
     info!(target: "overlayfsx::help", "Meta OverlayFS Tool (overlayfsx)");
@@ -47,7 +50,16 @@ fn main() -> Result<()> {
 
     // 4. Main Mount Sequence
     info!(target: "overlayfsx::main", "Overlayfsx v{}", env!("CARGO_PKG_VERSION"));
+    run_mount()
+}
 
+#[cfg(not(target_os = "android"))]
+fn run_mount() -> Result<()> {
+    anyhow::bail!("mounting is only supported on Android; use `inspect` or `xcp` on this platform")
+}
+
+#[cfg(target_os = "android")]
+fn run_mount() -> Result<()> {
     // Dual-directory support: metadata + content
     let metadata_dir = std::env::var("MODULE_METADATA_DIR")
         .unwrap_or_else(|_| defs::MODULE_METADATA_DIR.to_string());

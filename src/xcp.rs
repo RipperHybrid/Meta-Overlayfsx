@@ -133,3 +133,64 @@ fn copy_segments(src_file: &mut File, dst_file: &File, punch_hole: bool) -> Resu
     dst_file.sync_all().context("failed to sync destination")?;
     Ok(())
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("overlayfsx-xcp-{}-{}", std::process::id(), name));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 8 MiB sparse file: data at the start, an explicit run of zeros, data in the middle and at the end.
+    fn make_source(path: &Path) {
+        let f = File::create(path).unwrap();
+        f.set_len(8 << 20).unwrap();
+        f.write_all_at(b"HEAD", 0).unwrap();
+        f.write_all_at(&vec![0u8; 256 * 1024], 1 << 20).unwrap(); // zeros that are really allocated
+        f.write_all_at(b"MIDDLE", 4 << 20).unwrap();
+        f.write_all_at(b"TAIL", (8 << 20) - 4).unwrap();
+    }
+
+    #[test]
+    fn copy_keeps_content_and_punch_hole_reclaims_zero_blocks() {
+        let dir = temp_dir("copy");
+        let (src, plain, punched) = (dir.join("src"), dir.join("plain"), dir.join("punched"));
+        make_source(&src);
+
+        copy_sparse_file(&src, &plain, false).unwrap();
+        copy_sparse_file(&src, &punched, true).unwrap();
+
+        let want = std::fs::read(&src).unwrap();
+        assert_eq!(std::fs::read(&plain).unwrap(), want);
+        assert_eq!(std::fs::read(&punched).unwrap(), want);
+        assert_eq!(std::fs::metadata(&punched).unwrap().len(), 8 << 20);
+        // the zero run must not take space in the punched copy
+        assert!(std::fs::metadata(&punched).unwrap().blocks() <= std::fs::metadata(&plain).unwrap().blocks());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn refuses_identical_source_and_destination() {
+        let dir = temp_dir("same");
+        let f = dir.join("img");
+        make_source(&f);
+        assert!(copy_sparse_file(&f, &f, false).is_err());
+        assert_eq!(std::fs::read(&f).unwrap()[..4], *b"HEAD"); // untouched
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_copy_leaves_no_destination_behind() {
+        let dir = temp_dir("missing");
+        let dst = dir.join("out");
+        assert!(copy_sparse_file(dir.join("does-not-exist"), &dst, false).is_err());
+        assert!(!dst.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

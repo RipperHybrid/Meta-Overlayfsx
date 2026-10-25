@@ -29,6 +29,10 @@
 ### 🔤 WebUI
 - Fonts are now bundled locally (Outfit variable + DM Mono 400/500, Latin subset, ~80 KB, SIL OFL), so the WebUI renders identically offline. The Google Fonts request was removed.
 
+### 🧪 Inspector
+- `inspect`: O(1) de-duplication (`HashSet`) instead of quadratic `Vec::contains`; symlinked directories are no longer followed (no endless loops, depth-limited walk); `/proc/mounts` octal escapes (`\040` …) are decoded so paths with spaces match; JSON output escapes every control character; a trailing `/` in `MODULE_CONTENT_DIR` no longer breaks matching.
+- Parsing and analysis were split into pure functions with **17 unit tests** (`cargo test` now runs on a normal host: the Android-only `mount` module is gated by `cfg(target_os = "android")`). CI runs them in a `test` job.
+
 ### ⚡ Features
 - **Restore module files:** *Restore files* button in a module's Info dialog (and `restore.sh <id>`) copies files that exist only in the image back into `/data/adb/modules/<id>`; existing files are never overwritten.
 - **Image backup:** one verified backup of the modules image is kept outside the module folder (`/data/adb/overlayfsx.d/modules.img.bak`). It is refreshed automatically on every update, and *Backup* / *Restore* buttons in Settings schedule a manual backup or a restore for the next boot (while the image is unmounted). A restore keeps the replaced image as `modules.img.replaced`.
