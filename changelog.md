@@ -30,6 +30,7 @@
 - Fonts are now bundled locally (Outfit variable + DM Mono 400/500, Latin subset, ~80 KB, SIL OFL), so the WebUI renders identically offline. The Google Fonts request was removed.
 
 ### ⚡ Features
+- **Restore module files:** *Restore files* button in a module's Info dialog (and `restore.sh <id>`) copies files that exist only in the image back into `/data/adb/modules/<id>`; existing files are never overwritten.
 - **Image backup:** one verified backup of the modules image is kept outside the module folder (`/data/adb/overlayfsx.d/modules.img.bak`). It is refreshed automatically on every update, and *Backup* / *Restore* buttons in Settings schedule a manual backup or a restore for the next boot (while the image is unmounted). A restore keeps the replaced image as `modules.img.replaced`.
 - **Resizable image:** new *Image Size* control in Settings (grow or shrink, applied safely on the next boot). New images can use a custom size via `/data/adb/overlayfsx.d/img_size_mb`.
 - **Optimize Storage:** uses `fstrim` first; the fallback compaction copy is verified and never replaces the image if any step fails.

@@ -237,10 +237,35 @@ export default class ModulesPage {
         };
         const modalRoot = document.getElementById('modal-container');
         modalRoot?.addEventListener('click', onModalClick);
+        const buttons = [{ text: 'Close', type: 'secondary', result: 'close' }];
+        if (m.existsInModulesDir) buttons.push({ text: 'Restore files', type: 'primary', result: 'restore' });
+        let choice;
         try {
-            await this.app.utils.showModal(`${m.name || m.id}`, content, [{ text: 'Close', type: 'secondary', result: 'close' }]);
+            choice = await this.app.utils.showModal(`${m.name || m.id}`, content, buttons);
         } finally {
             modalRoot?.removeEventListener('click', onModalClick);
+        }
+        if (choice === 'restore') await this.restoreModuleFiles(m);
+    }
+
+    // Copy files that exist only in the image back into the module folder (never overwrites).
+    async restoreModuleFiles(m) {
+        const utils = this.app.utils;
+        if (!utils.isValidId(m.id)) { utils.showToast('Invalid module id', 'error'); return; }
+        const ok = await utils.confirmAction(
+            'Restore files',
+            `Copy missing files of <strong>${utils.escapeHtml(m.name || m.id)}</strong> from the modules image back into its folder in /data/adb/modules? Existing files are not overwritten.`,
+            'Restore'
+        );
+        if (!ok) return;
+        try {
+            const out = await utils.execCommand(`sh ${utils.shQuote(CONFIG.RESTORE_SH)} ${utils.shQuote(m.id)}`);
+            const match = /restored:(\d+)/.exec(out);
+            const n = match ? parseInt(match[1], 10) : 0;
+            utils.showToast(n > 0 ? `Restored ${n} file(s) for ${m.name || m.id}` : 'Nothing to restore, all files are already present', n > 0 ? 'success' : 'info');
+        } catch (err) {
+            utils.logToFile(`Restore failure: ${err.message}`, 'ERROR');
+            utils.showToast(`Restore failed: ${err.message}`, 'error');
         }
     }
 
