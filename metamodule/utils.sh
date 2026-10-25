@@ -130,6 +130,86 @@ apply_pending_resize() {
     return 0
 }
 
+# --- Image backup / restore ---------------------------------------------------
+# One backup generation is kept OUTSIDE the module directory (which KernelSU replaces on
+# every update). Requests from the WebUI are plain flag files processed at boot while the
+# image is not mounted, so the copy is always consistent:
+#   $CONF_DIR/backup_now       -> create/refresh the backup
+#   $CONF_DIR/restore_backup   -> replace the image with the backup
+BACKUP_FILE="$CONF_DIR/modules.img.bak"
+REPLACED_FILE="$CONF_DIR/modules.img.replaced"
+
+# Used KiB of a (sparse) file.
+used_kb() {
+    du -k "$1" 2>/dev/null | awk '{print $1}'
+}
+
+# backup_image <image>   ($XCP_BIN must point to the overlayfsx binary)
+# The image MUST be unmounted. The old backup is only replaced by a verified new one.
+backup_image() {
+    local img="$1" tmp="$BACKUP_FILE.tmp" need free
+    [ -f "$img" ] || { log WARN "No image to back up"; return 1; }
+    [ -x "$XCP_BIN" ] || { log WARN "xcp binary not available, backup skipped"; return 1; }
+    mkdir -p "$CONF_DIR" || return 1
+
+    need=$(used_kb "$img"); free=$(avail_kb "$CONF_DIR")
+    if is_uint "$need" && is_uint "$free" && [ "$free" -lt $((need + 65536)) ]; then
+        log WARN "Not enough free storage for a backup (need ~$((need / 1024)) MB, free $((free / 1024)) MB)"
+        return 1
+    fi
+
+    rm -f "$tmp"
+    if ! "$XCP_BIN" xcp "$img" "$tmp" --punch-hole >/dev/null 2>&1; then
+        log WARN "Backup copy failed"; rm -f "$tmp"; return 1
+    fi
+    if ! fsck_image "$tmp" check; then
+        log WARN "Backup did not pass verification and was discarded"; rm -f "$tmp"; return 1
+    fi
+    chmod 600 "$tmp" 2>/dev/null
+    mv "$tmp" "$BACKUP_FILE" || { rm -f "$tmp"; return 1; }
+    log INFO "Image backup created ($(used_kb "$BACKUP_FILE") KB used)"
+    return 0
+}
+
+# restore_image_backup <image>   (image MUST be unmounted)
+# The backup is verified twice (itself and the staged copy). The replaced image is kept as
+# $REPLACED_FILE (one generation) so the operation can be undone by hand.
+restore_image_backup() {
+    local img="$1" new="$1.restore" need free
+    [ -f "$BACKUP_FILE" ] || { log WARN "Restore requested but no backup exists"; return 1; }
+    [ -x "$XCP_BIN" ] || { log ERROR "xcp binary not available, restore skipped"; return 1; }
+
+    fsck_image "$BACKUP_FILE" check || { log ERROR "Backup is damaged, restore aborted (image unchanged)"; return 1; }
+
+    need=$(used_kb "$BACKUP_FILE"); free=$(avail_kb "$(dirname "$img")")
+    if is_uint "$need" && is_uint "$free" && [ "$free" -lt $((need + 65536)) ]; then
+        log ERROR "Not enough free storage to restore (need ~$((need / 1024)) MB)"
+        return 1
+    fi
+
+    rm -f "$new"
+    if ! "$XCP_BIN" xcp "$BACKUP_FILE" "$new" >/dev/null 2>&1; then
+        log ERROR "Restore copy failed (image unchanged)"; rm -f "$new"; return 1
+    fi
+    if ! fsck_image "$new" check; then
+        log ERROR "Restored copy failed verification (image unchanged)"; rm -f "$new"; return 1
+    fi
+
+    rm -f "$REPLACED_FILE"
+    if [ -f "$img" ] && ! mv "$img" "$REPLACED_FILE"; then
+        log ERROR "Could not set the current image aside (image unchanged)"; rm -f "$new"; return 1
+    fi
+    if ! mv "$new" "$img"; then
+        log ERROR "Could not activate the restored image, rolling back"
+        [ -f "$REPLACED_FILE" ] && mv "$REPLACED_FILE" "$img"
+        rm -f "$new"
+        return 1
+    fi
+    chcon u:object_r:ksu_file:s0 "$img" 2>/dev/null
+    log INFO "Image restored from backup (previous image kept as modules.img.replaced)"
+    return 0
+}
+
 # Extract property value from file (everything after the first "=", so values may contain "=")
 get_prop() {
     prop="$1"

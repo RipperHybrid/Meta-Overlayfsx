@@ -96,6 +96,8 @@ export default class SettingsPage {
             </div>
             ` : ''}
 
+            ${imageStatus.exists ? this.buildBackupPlane() : ''}
+
             <div class="s-plane">
                 <div class="s-plane-head">
                     <div class="s-plane-icon icon-violet">
@@ -182,6 +184,58 @@ export default class SettingsPage {
         `;
     }
 
+    buildBackupPlane() {
+        const u = this.app.utils;
+        const b = this.data.backup || {};
+        const when = b.exists && b.mtime ? new Date(b.mtime * 1000).toLocaleString() : '';
+        const status = b.exists
+            ? `Last backup: <strong>${u.escapeHtml(when)}</strong> (${u.escapeHtml(u.formatBytes(b.usedBytes))} stored)`
+            : 'No backup yet.';
+        const pending = [
+            b.restorePending ? 'Restore from backup at next reboot' : '',
+            b.backupPending ? 'New backup at next reboot' : ''
+        ].filter(Boolean).map(t => `<br><strong>Pending: ${u.escapeHtml(t)}</strong>`).join('');
+        return `
+            <div class="s-plane">
+                <div class="s-plane-head">
+                    <div class="s-plane-icon icon-blue">
+                        ${this.app.icon('layer-group')}
+                    </div>
+                    <div class="s-plane-title">Image Backup</div>
+                </div>
+                <div class="s-row-static border-none pb-4">
+                    <div class="s-row-body">
+                        <div class="s-row-label-desc">One verified backup of the modules image is kept outside the module folder. It is refreshed automatically on every update. Backup and restore run during the next boot, while the image is not in use.<br>${status}${pending}</div>
+                    </div>
+                </div>
+                <div class="s-actions pt-6">
+                    <button class="s-btn primary" id="backup-image">${this.app.icon('copy')} Backup</button>
+                    <button class="s-btn danger" id="restore-backup" ${b.exists ? '' : 'disabled'}>${this.app.icon('undo')} Restore</button>
+                </div>
+            </div>`;
+    }
+
+    async scheduleBackupRequest(kind) {
+        const u = this.app.utils;
+        const isRestore = kind === 'restore';
+        const ok = await u.confirmAction(
+            isRestore ? 'Restore Backup' : 'Create Backup',
+            isRestore
+                ? 'Replace the current modules image with the backup at the next reboot? Changes made since the backup (installed or removed modules) are lost. The current image is kept as <strong>modules.img.replaced</strong>.'
+                : 'Create a fresh backup of the modules image during the next reboot? The previous backup is replaced only after the new one is verified.',
+            isRestore ? 'Restore' : 'Schedule'
+        );
+        if (!ok) return;
+        try {
+            const flag = isRestore ? 'restore_backup' : 'backup_now';
+            await u.execCommand(`mkdir -p ${u.shQuote(CONFIG.CONF_DIR)} && : > ${u.shQuote(CONFIG.CONF_DIR + '/' + flag)}`);
+            u.showToast(isRestore ? 'Restore scheduled. Reboot to apply.' : 'Backup scheduled. Reboot to apply.', 'success');
+            await this.update();
+        } catch (err) {
+            u.showToast(`Failed: ${err.message}`, 'error');
+        }
+    }
+
     async getModuleId() {
         let moduleId = 'meta-overlayfsx';
         try {
@@ -194,6 +248,30 @@ export default class SettingsPage {
             }
         } catch (err) {}
         return moduleId;
+    }
+
+    // Backup state: file info plus requests that are waiting for the next boot.
+    async loadBackupInfo() {
+        const info = { exists: false, mtime: 0, usedBytes: 0, backupPending: false, restorePending: false };
+        try {
+            const out = await this.app.utils.execCommand(`
+                B=${this.app.utils.shQuote(CONFIG.BACKUP_FILE)}; C=${this.app.utils.shQuote(CONFIG.CONF_DIR)}
+                if [ -f "$B" ]; then echo "bak:$(stat -c %Y "$B"):$(du -k "$B" | awk '{print $1}')"; fi
+                [ -f "$C/backup_now" ] && echo "pending:backup"
+                [ -f "$C/restore_backup" ] && echo "pending:restore"
+                true
+            `);
+            for (const line of out.split('\n')) {
+                const p = line.trim().split(':');
+                if (p[0] === 'bak') {
+                    info.exists = true;
+                    info.mtime = parseInt(p[1], 10) || 0;
+                    info.usedBytes = (parseInt(p[2], 10) || 0) * 1024;
+                } else if (p[0] === 'pending' && p[1] === 'backup') info.backupPending = true;
+                else if (p[0] === 'pending' && p[1] === 'restore') info.restorePending = true;
+            }
+        } catch { /* keep defaults */ }
+        return info;
     }
 
     async loadData() {
@@ -212,6 +290,7 @@ export default class SettingsPage {
                 imageUsage: `${usage.usedFormatted} / ${usage.totalFormatted} (${usage.percent}%)`,
                 imageStatus: { mounted: usage.mounted, exists: usage.exists },
                 resizePending: (await utils.execCommand(`tr -dc '0-9' < "${CONFIG.CONF_DIR}/resize_mb" 2>/dev/null`).catch(() => '')).trim(),
+                backup: await this.loadBackupInfo(),
                 moduleId,
                 removePending
             };
@@ -252,6 +331,8 @@ export default class SettingsPage {
 
         document.getElementById('optimize-image')?.addEventListener('click', e => this.optimizeStorage(e.currentTarget));
         document.getElementById('resize-image')?.addEventListener('click', e => this.scheduleResize(e.currentTarget));
+        document.getElementById('backup-image')?.addEventListener('click', () => this.scheduleBackupRequest('backup'));
+        document.getElementById('restore-backup')?.addEventListener('click', () => this.scheduleBackupRequest('restore'));
         document.getElementById('uninstall-meta-btn')?.addEventListener('click', () => this.uninstallMetaModule());
 
         document.querySelectorAll('.path-copy').forEach(btn => {

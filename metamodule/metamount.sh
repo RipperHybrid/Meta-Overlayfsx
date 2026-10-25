@@ -14,6 +14,7 @@ RW_ROOT="/data/adb/modules/.rw"
 PARTITIONS="system vendor product system_ext odm oem"
 MODULE_METADATA_DIR="/data/adb/modules"
 LOG_FILE="$META_DIR/overlayfsx.log"
+BINARY_PATH="$META_DIR/overlayfsx"
 
 log INFO "Starting module mount process"
 
@@ -33,7 +34,19 @@ if ! mountpoint -q "$MNT_DIR" 2>/dev/null; then
         exit 1
     fi
 
-    # Resize requested from the WebUI (needs the image unmounted).
+    # Requests from the WebUI (all need the image unmounted): restore, backup, resize.
+    # Each flag is consumed first, so a failing request can never repeat on every boot.
+    XCP_BIN="$BINARY_PATH"
+    if [ -f "$CONF_DIR/restore_backup" ]; then
+        rm -f "$CONF_DIR/restore_backup"
+        log INFO "Restoring modules image from backup..."
+        restore_image_backup "$IMG_FILE" || log ERROR "Restore from backup failed"
+    fi
+    if [ -f "$CONF_DIR/backup_now" ]; then
+        rm -f "$CONF_DIR/backup_now"
+        log INFO "Creating modules image backup..."
+        backup_image "$IMG_FILE" || log WARN "Backup was not created"
+    fi
     apply_pending_resize "$IMG_FILE"
 
     # Cheap when the image was cleanly unmounted; repairs it after a crash/power loss.

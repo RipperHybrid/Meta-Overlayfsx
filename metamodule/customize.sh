@@ -100,6 +100,15 @@ if [ -f "$EXISTING_IMG" ]; then
         abort "! Existing modules image is damaged and could not be repaired. Update cancelled, your current install is untouched."
     fi
     ui_print "- Image verified"
+
+    # Keep one verified backup outside the module folder (KernelSU deletes that folder).
+    # Failure is not fatal: the update itself is already safe.
+    XCP_BIN="$MODPATH/overlayfsx"
+    if backup_image "$IMG_FILE"; then
+        ui_print "- Backup of the modules image saved"
+    else
+        ui_print "- Warning: could not create a backup of the modules image"
+    fi
 else
     ui_print "- Creating ${IMG_SIZE_MB} MB ext4 image for module storage"
     IS_FIRST_INSTALL=true
