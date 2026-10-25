@@ -133,7 +133,10 @@ fn mount_overlay_child(
     }
 
     if let Err(e) = mount_overlayfs(&lower_dirs, stock_root, None, None, mount_point) {
-        warn!("Overlay rejected for child {} ({e:#}), falling back to bind mount", mount_point);
+        warn!(
+            "Overlay rejected for child {} ({e:#}), falling back to bind mount",
+            mount_point
+        );
         bind_mount(stock_root, mount_point)?;
     }
     Ok(())
@@ -196,7 +199,10 @@ pub fn umount_dir_lazy(src: impl AsRef<Path>) -> Result<()> {
 
 fn mount_partition(partition_name: &str, lowerdir: &Vec<String>) -> Result<()> {
     if lowerdir.is_empty() {
-        debug!("Partition: {} has no module overlays, skipping", partition_name);
+        debug!(
+            "Partition: {} has no module overlays, skipping",
+            partition_name
+        );
         return Ok(());
     }
 
@@ -317,7 +323,11 @@ pub fn mount_modules_systemlessly(metadata_dir: &str, content_dir: &str) -> Resu
         }
 
         if !provided_parts.is_empty() {
-            info!("Module {}: overlays [{}]", module_id, provided_parts.join(", "));
+            info!(
+                "Module {}: overlays [{}]",
+                module_id,
+                provided_parts.join(", ")
+            );
         } else {
             info!("Module {}: active (No overlay partitions)", module_id);
         }

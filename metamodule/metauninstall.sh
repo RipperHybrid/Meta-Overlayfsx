@@ -4,8 +4,6 @@
 # Module uninstallation hook for ext4 image cleanup
 ############################################
 
-MODDIR="${0%/*}"
-
 # Constants
 MNT_DIR="/data/adb/metamodule/mnt"
 

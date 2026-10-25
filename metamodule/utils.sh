@@ -255,22 +255,22 @@ modify_prop() {
 # Mount ext4 image if not already mounted
 ensure_image_mounted() {
     if ! mountpoint -q "$MNT_DIR" 2>/dev/null; then
-        log "Mounting modules image"
+        log INFO "Mounting modules image"
         mkdir -p "$MNT_DIR"
         chcon u:object_r:ksu_file:s0 "$IMG_FILE" 2>/dev/null
         mount -t ext4 -o loop,rw,noatime "$IMG_FILE" "$MNT_DIR" || {
-            log "Failed to mount modules image" && exit 1
+            log ERROR "Failed to mount modules image" && exit 1
         }
-        log "Image mounted successfully"
+        log INFO "Image mounted successfully"
     else
-        log "Image already mounted"
+        log INFO "Image already mounted"
     fi
 }
 
 # Determine whether this module should be moved into the ext4 image
 module_requires_overlay_move() {
     if [ -f "$MODPATH/skip_mount" ]; then
-        log "skip_mount flag detected; keeping files under /data/adb/modules"
+        log INFO "skip_mount flag detected; keeping files under /data/adb/modules"
         return 1
     fi
 
@@ -280,7 +280,7 @@ module_requires_overlay_move() {
         fi
     done
 
-    log "No overlay dirs found; keeping module in /data/adb/modules"
+    log INFO "No overlay dirs found; keeping module in /data/adb/modules"
     return 1
 }
 
@@ -327,7 +327,7 @@ list_overlay_files() {
 # Check for file conflicts with other installed modules.
 # Uses one sorted file list per module and `comm`, instead of spawning processes per file.
 check_conflicts() {
-    log "Scanning for potential file conflicts..."
+    log INFO "Scanning for potential file conflicts..."
     local work_dir="/data/local/tmp/overlayfsx_conflicts_$$"
     local own_list="$work_dir/own.lst" other_list="$work_dir/other.lst"
     local temp_conflicts="$work_dir/conflicts.tmp"
@@ -358,7 +358,7 @@ check_conflicts() {
     fi
 
     if [ -s "$temp_conflicts" ]; then
-        log "File conflicts detected at the exact same mount path!"
+        log WARN "File conflicts detected at the exact same mount path!"
 
         awk -F'|' '{
             mod=$1
@@ -386,12 +386,12 @@ check_conflicts() {
                 }
             }
         }' "$temp_conflicts" | while IFS= read -r log_line; do
-            log "$log_line"
+            log INFO "$log_line"
         done
 
-        log "Note: Both exist in their module folders, but the last one mounted will shadow (overwrite) the other."
+        log INFO "Note: Both exist in their module folders, but the last one mounted will shadow (overwrite) the other."
     else
-        log "No file conflicts found."
+        log INFO "No file conflicts found."
     fi
 
     rm -rf "$work_dir"
@@ -402,7 +402,7 @@ check_conflicts() {
 # partition was copied. A failed or interrupted copy therefore can never replace a
 # working module at the next boot.
 post_install_to_image() {
-    log "Moving module content to image"
+    log INFO "Moving module content to image"
 
     if [ -d "$MNT_DIR" ]; then
         chmod 755 "$MNT_DIR" 2>/dev/null || true
@@ -424,7 +424,7 @@ post_install_to_image() {
         return 1
     fi
 
-    log "Staging payload to ${MODID}_update."
+    log INFO "Staging payload to ${MODID}_update."
 
     # Nuke leftovers of failed previous staging attempts to ensure a clean slate
     rm -rf "$TMP_DIR"
@@ -435,7 +435,7 @@ post_install_to_image() {
     for part in system vendor product system_ext odm oem; do
         SRC_DIR="$MODPATH/$part"
         [ -d "$SRC_DIR" ] || continue
-        log "Copying $part/ to staging area"
+        log INFO "Copying $part/ to staging area"
 
         if ! cp -af "$SRC_DIR" "$TMP_DIR/"; then
             log ERROR "Failed to copy $part, staging aborted (previous version stays active)"
@@ -456,7 +456,7 @@ post_install_to_image() {
     fi
     sync
 
-    log "Module content staged to image successfully"
+    log INFO "Module content staged to image successfully"
     return 0
 }
 

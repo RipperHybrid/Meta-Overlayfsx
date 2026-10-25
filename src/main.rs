@@ -38,17 +38,17 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // 3. Check for CLI sub-commands
+    // 3. `xcp` sub-command
     if matches!(args.get(1), Some(cmd) if cmd == "xcp") {
         return xcp::run(&args[2..]);
     }
 
-    // Execute the active mount inspector, pass remaining args for flags
+    // 4. `inspect` sub-command (remaining args are its flags)
     if matches!(args.get(1), Some(cmd) if cmd == "inspect") {
         return inspect::run(&args[2..]);
     }
 
-    // 4. Main Mount Sequence
+    // 5. Default: mount all enabled modules
     info!(target: "overlayfsx::main", "Overlayfsx v{}", env!("CARGO_PKG_VERSION"));
     run_mount()
 }

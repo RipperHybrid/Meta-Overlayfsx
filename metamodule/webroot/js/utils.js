@@ -34,18 +34,6 @@ export default class Utils {
         });
     }
 
-    static async getModuleProp(moduleId, prop) {
-        try {
-            if (!this.isValidId(moduleId) || !/^[A-Za-z0-9_]+$/.test(prop)) return null;
-            const result = await this.execCommand(
-                `grep "^${prop}=" "/data/adb/modules/${moduleId}/module.prop" 2>/dev/null | cut -d'=' -f2-`
-            );
-            return result.trim() || null;
-        } catch { return null; }
-    }
-
-    static async updateRootStatus() {}
-
     static async getStorageUsage(imgFile, mntDir) {
         try {
             const [mounted, exists] = await Promise.all([
@@ -88,10 +76,13 @@ export default class Utils {
     }
 
     static logToFile(message, level = 'INFO') {
-        if (typeof ksu === 'undefined') return;
+        if (typeof ksu === 'undefined' || typeof ksu.exec !== 'function') return;
         const lvl = level.padEnd(5, ' ');
         const entry = `[${lvl} overlayfsx::webui] ${message}`.replace(/'/g, "'\\''").replace(/\n/g, ' ');
-        ksu.exec(`echo '${entry}' >> "${CONFIG.LOG_FILE}"`, '{}', () => {});
+        // KernelSU expects the NAME of a global callback, not a function.
+        const callbackName = `log_cb_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+        window[callbackName] = () => { delete window[callbackName]; };
+        ksu.exec(`echo '${entry}' >> "${CONFIG.LOG_FILE}"`, '{}', callbackName);
     }
 
     static formatBytes(bytes, decimals = 1) {
@@ -203,13 +194,6 @@ export default class Utils {
         try {
             const r = await this.execCommand('id');
             return r.includes('uid=0');
-        } catch { return false; }
-    }
-
-    static async checkKernelSU() {
-        try {
-            const r = await this.execCommand('ksud -V 2>/dev/null || echo "N/A"');
-            return r.trim() !== 'N/A' && r.trim() !== '';
         } catch { return false; }
     }
 

@@ -44,7 +44,9 @@ fn unescape_mount(s: &str) -> String {
             && i + 3 < b.len()
             && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c))
         {
-            let v = (b[i + 1] - b'0') as u32 * 64 + (b[i + 2] - b'0') as u32 * 8 + (b[i + 3] - b'0') as u32;
+            let v = (b[i + 1] - b'0') as u32 * 64
+                + (b[i + 2] - b'0') as u32 * 8
+                + (b[i + 3] - b'0') as u32;
             if v <= 255 {
                 out.push(v as u8);
                 i += 4;
@@ -269,7 +271,10 @@ fn analyze(active_partitions: &BTreeMap<String, Vec<String>>, content_dir: &str)
             walk_dir(&mod_part_path, &mod_part_path, &mut files, 0);
 
             if !files.is_empty() {
-                let p_list = result.module_partitions.entry(module_id.clone()).or_default();
+                let p_list = result
+                    .module_partitions
+                    .entry(module_id.clone())
+                    .or_default();
 
                 for f in &files {
                     // First path component of a relative file path is its sub-partition dir.
@@ -350,7 +355,9 @@ pub fn run(args: &[String]) -> Result<()> {
 
     if active_partitions.is_empty() || resolved_content_dir.is_empty() {
         if is_raw {
-            println!("{{ \"status\": \"error\", \"message\": \"No active Meta OverlayFS mounts found in the kernel.\" }}");
+            println!(
+                "{{ \"status\": \"error\", \"message\": \"No active Meta OverlayFS mounts found in the kernel.\" }}"
+            );
         } else {
             info!(target: "overlayfsx::inspect", "CRITICAL: No active Meta OverlayFS mounts found in the kernel.");
             info!(target: "overlayfsx::inspect", "The mount process likely failed or the device has not rebooted.");
@@ -389,7 +396,8 @@ pub fn run(args: &[String]) -> Result<()> {
         json.push_str("{\n");
         json.push_str("  \"status\": \"success\",\n");
 
-        let parts_str = display_partitions.iter()
+        let parts_str = display_partitions
+            .iter()
             .map(|p| format!("\"{}\"", escape_json(p)))
             .collect::<Vec<_>>()
             .join(", ");
@@ -400,20 +408,20 @@ pub fn run(args: &[String]) -> Result<()> {
         for mod_id in &active_modules {
             let count = global_module_file_counts.get(mod_id).copied().unwrap_or(0);
 
-            let mut m_parts = module_partitions
-                .get(mod_id)
-                .cloned()
-                .unwrap_or_default();
+            let mut m_parts = module_partitions.get(mod_id).cloned().unwrap_or_default();
             m_parts.sort();
 
-            let m_parts_str = m_parts.iter()
+            let m_parts_str = m_parts
+                .iter()
                 .map(|p| format!("\"{}\"", escape_json(p)))
                 .collect::<Vec<_>>()
                 .join(", ");
 
             mods_str.push(format!(
                 "    {{ \"id\": \"{}\", \"files\": {}, \"partitions\": [{}] }}",
-                escape_json(mod_id), count, m_parts_str
+                escape_json(mod_id),
+                count,
+                m_parts_str
             ));
         }
         json.push_str(&mods_str.join(",\n"));
@@ -423,13 +431,16 @@ pub fn run(args: &[String]) -> Result<()> {
         let mut conf_str = Vec::new();
         for (file, mods) in &conflicts {
             let winner = &mods[0];
-            let ignored = mods[1..].iter()
+            let ignored = mods[1..]
+                .iter()
                 .map(|m| format!("\"{}\"", escape_json(m)))
                 .collect::<Vec<_>>()
                 .join(", ");
             conf_str.push(format!(
                 "    {{ \"file\": \"{}\", \"winner\": \"{}\", \"ignored\": [{}] }}",
-                escape_json(file), escape_json(winner), ignored
+                escape_json(file),
+                escape_json(winner),
+                ignored
             ));
         }
         json.push_str(&conf_str.join(",\n"));
@@ -442,7 +453,6 @@ pub fn run(args: &[String]) -> Result<()> {
         json.push_str("}");
 
         println!("{}", json);
-
     } else {
         for (i, mod_id) in active_modules.iter().enumerate() {
             let count = global_module_file_counts.get(mod_id).copied().unwrap_or(0);
@@ -505,7 +515,8 @@ mod tests {
     const CD: &str = "/data/adb/metamodule/mnt";
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("overlayfsx-test-{}-{}", std::process::id(), name));
+        let dir =
+            std::env::temp_dir().join(format!("overlayfsx-test-{}-{}", std::process::id(), name));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -603,7 +614,10 @@ mod tests {
 
     #[test]
     fn parse_mounts_reports_nothing_when_no_overlay_is_ours() {
-        let m = parse_mounts("tmpfs /dev tmpfs rw 0 0\nKSU /odm overlay ro,lowerdir=/x/odm:/odm 0 0", None);
+        let m = parse_mounts(
+            "tmpfs /dev tmpfs rw 0 0\nKSU /odm overlay ro,lowerdir=/x/odm:/odm 0 0",
+            None,
+        );
         assert!(m.partitions.is_empty());
         assert!(m.content_dir.is_empty());
     }
@@ -614,7 +628,10 @@ mod tests {
         for k in ["/product", "/product/media", "/system", "/system_ext"] {
             p.insert(k.to_string(), vec![]);
         }
-        assert_eq!(display_roots(&p), vec!["/product", "/system", "/system_ext"]);
+        assert_eq!(
+            display_roots(&p),
+            vec!["/product", "/system", "/system_ext"]
+        );
     }
 
     #[test]
@@ -629,7 +646,10 @@ mod tests {
         let mut files = Vec::new();
         walk_dir(&root, &root, &mut files, 0);
         files.sort();
-        assert_eq!(files, vec!["a/b/two", "a/loop", "a/one", "link_file", "top"]);
+        assert_eq!(
+            files,
+            vec!["a/b/two", "a/loop", "a/one", "link_file", "top"]
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -657,7 +677,10 @@ mod tests {
         touch(&root.join("b/system/app/x.apk"));
 
         let mut active = BTreeMap::new();
-        active.insert("/system".to_string(), vec!["a".to_string(), "b".to_string()]);
+        active.insert(
+            "/system".to_string(),
+            vec!["a".to_string(), "b".to_string()],
+        );
         let r = analyze(&active, root.to_str().unwrap());
 
         assert_eq!(r.file_counts["a"], 3);

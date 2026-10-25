@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use hole_punch::*;
 use std::{
     fs::{File, OpenOptions},
@@ -124,7 +124,9 @@ fn copy_segments(src_file: &mut File, dst_file: &File, punch_hole: bool) -> Resu
                 }
                 dst_file
                     .write_all_at(block, pos + (i * BLOCK) as u64)
-                    .with_context(|| format!("write failed at offset {}", pos + (i * BLOCK) as u64))?;
+                    .with_context(|| {
+                        format!("write failed at offset {}", pos + (i * BLOCK) as u64)
+                    })?;
             }
             pos += got as u64;
         }
@@ -134,14 +136,14 @@ fn copy_segments(src_file: &mut File, dst_file: &File, punch_hole: bool) -> Resu
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::fs::MetadataExt;
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("overlayfsx-xcp-{}-{}", std::process::id(), name));
+        let dir =
+            std::env::temp_dir().join(format!("overlayfsx-xcp-{}-{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -171,7 +173,10 @@ mod tests {
         assert_eq!(std::fs::read(&punched).unwrap(), want);
         assert_eq!(std::fs::metadata(&punched).unwrap().len(), 8 << 20);
         // the zero run must not take space in the punched copy
-        assert!(std::fs::metadata(&punched).unwrap().blocks() <= std::fs::metadata(&plain).unwrap().blocks());
+        assert!(
+            std::fs::metadata(&punched).unwrap().blocks()
+                <= std::fs::metadata(&plain).unwrap().blocks()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

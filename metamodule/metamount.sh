@@ -14,7 +14,7 @@ RW_ROOT="/data/adb/modules/.rw"
 PARTITIONS="system vendor product system_ext odm oem"
 MODULE_METADATA_DIR="/data/adb/modules"
 LOG_FILE="$META_DIR/overlayfsx.log"
-BINARY_PATH="$META_DIR/overlayfsx"
+BINARY="$META_DIR/overlayfsx"
 
 log INFO "Starting module mount process"
 
@@ -36,7 +36,7 @@ if ! mountpoint -q "$MNT_DIR" 2>/dev/null; then
 
     # Requests from the WebUI (all need the image unmounted): restore, backup, resize.
     # Each flag is consumed first, so a failing request can never repeat on every boot.
-    XCP_BIN="$BINARY_PATH"
+    XCP_BIN="$BINARY"
     if [ -f "$CONF_DIR/restore_backup" ]; then
         rm -f "$CONF_DIR/restore_backup"
         log INFO "Restoring modules image from backup..."
@@ -65,9 +65,7 @@ else
     log INFO "Image already mounted at $MNT_DIR"
 fi
 
-# Binary path
-BINARY="$META_DIR/overlayfsx"
-
+# The mount binary must exist (checked after the image is ready)
 if [ ! -f "$BINARY" ]; then
     log ERROR "Binary not found: $BINARY"
     exit 1
